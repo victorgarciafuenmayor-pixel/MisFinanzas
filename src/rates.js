@@ -22,14 +22,13 @@ export function parseDolarApi(list, fuente) {
   return { value, updatedAt: item.fechaActualizacion ? Date.parse(item.fechaActualizacion) || Date.now() : Date.now() };
 }
 
-/** Average of the first `n` advert prices (exact BigInt math). */
-export function parseBinanceP2P(json, n = 5) {
+/** Lowest advert price among the returned BUY ads (best price to buy USDT with VES). */
+export function parseBinanceP2P(json) {
   const ads = json && Array.isArray(json.data) ? json.data : null;
   if (!ads || !ads.length) throw new Error("sin anuncios");
-  const prices = ads.slice(0, n).map((a) => parseRate(a?.adv?.price)).filter((p) => p !== null);
+  const prices = ads.map((a) => parseRate(a?.adv?.price)).filter((p) => p !== null);
   if (!prices.length) throw new Error("precios inválidos");
-  const sum = prices.reduce((a, b) => a + b, 0n);
-  return { value: sum / BigInt(prices.length), updatedAt: Date.now() };
+  return { value: prices.reduce((m, p) => (p < m ? p : m)), updatedAt: Date.now() };
 }
 
 async function getJson(url, init, timeoutMs = 8000) {
@@ -45,7 +44,7 @@ async function getJson(url, init, timeoutMs = 8000) {
 }
 
 const BINANCE_BODY = JSON.stringify({
-  fiat: "VES", asset: "USDT", tradeType: "BUY", page: 1, rows: 5,
+  fiat: "VES", asset: "USDT", tradeType: "BUY", page: 1, rows: 10,
   publisherType: null, payTypes: [], countries: [], proMerchantAds: false, shieldMerchantAds: false,
 });
 
@@ -55,11 +54,12 @@ const BINANCE_BODY = JSON.stringify({
  * Binance falls back to the DolarApi "paralelo" rate if the P2P endpoint is unreachable
  * (browsers may block it by CORS); the fallback is labelled in `source`.
  */
-export async function fetchRates() {
+export async function fetchRates({ binanceUrl = "" } = {}) {
   const [dol, eur, bin] = await Promise.allSettled([
     getJson(SOURCES.dolares),
     getJson(SOURCES.euros),
-    getJson(SOURCES.binance, { method: "POST", headers: { "content-type": "application/json" }, body: BINANCE_BODY }),
+    // With a proxy URL the proxy performs the POST for us (browsers block the direct call by CORS)
+    binanceUrl ? getJson(binanceUrl) : getJson(SOURCES.binance, { method: "POST", headers: { "content-type": "application/json" }, body: BINANCE_BODY }),
   ]);
   const wrap = (settled, parse, source) => {
     if (settled.status !== "fulfilled") return { error: settled.reason?.message || "sin conexión" };
@@ -67,7 +67,7 @@ export async function fetchRates() {
   };
   const bcvUsd = wrap(dol, (j) => parseDolarApi(j, "oficial"), "BCV oficial");
   const bcvEur = wrap(eur, (j) => parseDolarApi(j, "oficial"), "BCV oficial");
-  let binance = wrap(bin, (j) => parseBinanceP2P(j), "Binance P2P");
+  let binance = wrap(bin, (j) => parseBinanceP2P(j), "Binance P2P · compra más baja");
   if (binance.error && dol.status === "fulfilled") {
     const alt = wrap(dol, (j) => parseDolarApi(j, "paralelo"), "Mercado paralelo");
     if (!alt.error) binance = { ...alt, approx: true };

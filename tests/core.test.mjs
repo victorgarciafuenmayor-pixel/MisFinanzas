@@ -64,9 +64,9 @@ test("DolarApi parsing picks the right fuente and rejects junk", () => {
   assert.throws(() => parseDolarApi({}, "oficial"));
 });
 
-test("Binance parsing averages top ads exactly", () => {
-  const json = { data: ["40.00", "40.10", "40.20"].map((price) => ({ adv: { price } })) };
-  assert.equal(parseBinanceP2P(json).value, R("40.1"));
+test("Binance parsing picks the lowest ad price exactly", () => {
+  const json = { data: ["40.20", "40.00", "40.10", "oops"].map((price) => ({ adv: { price } })) };
+  assert.equal(parseBinanceP2P(json).value, R("40"));
   assert.throws(() => parseBinanceP2P({ data: [] }));
 });
 

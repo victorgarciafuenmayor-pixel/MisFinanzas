@@ -60,7 +60,7 @@ async function refreshRates() {
   loading = true;
   renderStatus();
   try {
-    const res = await fetchRates();
+    const res = await fetchRates({ binanceUrl: state.settings.binanceProxy });
     rateErrors = {};
     for (const [key, r] of Object.entries(res)) {
       if (r.error) { rateErrors[key] = r.error; continue; }
@@ -480,10 +480,18 @@ function settingsDialog() {
   const dlg = dialog(`
     <label for="s-val">Valorar el balance con</label>
     <select id="s-val" name="valuation"><option value="bcv" ${state.settings.valuation === "bcv" ? "selected" : ""}>Tasa BCV</option><option value="binance" ${state.settings.valuation === "binance" ? "selected" : ""}>Tasa Binance</option></select>
+    <h2>Tasa Binance</h2>
+    <label for="s-proxy">Dirección del servidor de Binance (opcional)</label>
+    <input id="s-proxy" name="proxy" inputmode="url" autocapitalize="off" autocomplete="off" placeholder="https://…workers.dev" value="${esc(state.settings.binanceProxy)}">
     <h2>Respaldo</h2>
     <p class="muted">Tus datos se guardan en este iPhone con doble copia interna. Último respaldo: ${state.settings.lastBackup ? ageText(state.settings.lastBackup) : "nunca"}. Guarda un respaldo en Archivos o iCloud Drive para no perderlos si borras la app.</p>
     <div class="actions" style="margin-top:0"><button type="button" id="s-exp">Exportar</button><button type="button" id="s-imp">Importar</button></div>
-    <input type="file" id="s-file" accept="application/json" hidden>`, (d) => { state.settings.valuation = d.valuation; });
+    <input type="file" id="s-file" accept="application/json" hidden>`, (d) => {
+    const proxy = (d.proxy || "").trim();
+    if (proxy && !/^https:\/\/[^\s]+$/.test(proxy)) return "La dirección debe empezar con https://";
+    state.settings.valuation = d.valuation;
+    if (proxy !== state.settings.binanceProxy) { state.settings.binanceProxy = proxy; setTimeout(refreshRates, 0); }
+  });
   dlg.querySelector("#s-exp").onclick = () => exportBackup().then((ok) => ok && render()).catch(() => { dlg.querySelector("#dlg-err").textContent = "No se pudo crear el respaldo."; });
   const file = dlg.querySelector("#s-file");
   dlg.querySelector("#s-imp").onclick = () => file.click();

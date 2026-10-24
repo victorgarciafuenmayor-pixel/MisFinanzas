@@ -9,7 +9,7 @@ export const defaultState = () => ({
   debts: [], // {id,type:'owe'|'owed',person,currency,principalMinor,dueDate|null,note,payments:[{id,date,amountMinor,txId|null}]}
   goals: [], // {id,name,targetMinor(USD),deadline|null,contributions:[{id,date,amountMinor}]}
   rates: { bcvUsd: null, bcvEur: null, binance: null }, // {value:string,updatedAt,source,manual?}
-  settings: { valuation: "bcv", customCats: { income: [], expense: [] }, lastBackup: null }, // which USD rate values the VES balance: 'bcv' | 'binance'
+  settings: { valuation: "bcv", customCats: { income: [], expense: [] }, lastBackup: null, binanceProxy: "" }, // which USD rate values the VES balance: 'bcv' | 'binance'
 });
 
 export function load(storage = globalThis.localStorage) {
