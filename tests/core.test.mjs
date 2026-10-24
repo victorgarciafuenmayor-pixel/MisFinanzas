@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  parseAmount, parseRate, convert, expensesByCategory, balances, totalIn, goalProgress, formatMinor, formatRate, minorToInput,
+  parseAmount, parseRate, convert, expensesByCategory, debtProgress, debtTotals, balances, totalIn, goalProgress, formatMinor, formatRate, minorToInput,
 } from "../src/money.js";
 import { parseDolarApi, parseBinanceP2P } from "../src/rates.js";
 import { normalize, defaultState } from "../src/store.js";
@@ -91,4 +91,27 @@ test("expensesByCategory groups, converts to USD and filters by month", () => {
   assert.equal(expensesByCategory(tx, rates).rows.length, 2);
   assert.equal(expensesByCategory(tx, { USD: R("36.5") }, null).skipped, 0);
   assert.equal(expensesByCategory([{ ...tx[0], currency: "EUR" }], { USD: R("36.5") }).skipped, 1);
+});
+
+test("debt progress, overdue and USD totals", () => {
+  const rates = { USD: R("36.5"), EUR: R("40") };
+  const d1 = { type: "owe", currency: "USD", principalMinor: "10000", dueDate: "2026-01-01", payments: [{ amountMinor: "2500" }] };
+  const p = debtProgress(d1, "2026-10-24");
+  assert.equal(p.remaining, 7500n);
+  assert.equal(p.pct, 25);
+  assert.equal(p.overdue, true);
+  assert.equal(debtProgress({ ...d1, payments: [{ amountMinor: "10000" }] }, "2026-10-24").settled, true);
+  assert.equal(debtProgress({ ...d1, payments: [{ amountMinor: "10000" }] }, "2026-10-24").overdue, false);
+  const d2 = { type: "owed", currency: "VES", principalMinor: "365000", dueDate: null, payments: [] }; // Bs. 3.650 = $100
+  const t = debtTotals([d1, d2], rates);
+  assert.equal(t.owe, 7500n);
+  assert.equal(t.owed, 10000n);
+  assert.equal(t.net, 2500n);
+  assert.equal(debtTotals([{ ...d2, currency: "EUR" }], { USD: R("36.5") }).skipped, 1);
+});
+
+test("store normalize keeps valid debts only", () => {
+  const s = normalize({ debts: [{ type: "owe", principalMinor: "5" }, { type: "x", principalMinor: "5" }, { type: "owed", principalMinor: "z" }] });
+  assert.equal(s.debts.length, 1);
+  assert.deepEqual(s.debts[0].payments, []);
 });

@@ -6,6 +6,7 @@ const KEY = "vef.state.v1";
 export const defaultState = () => ({
   rev: 0, // bumped on every save; lets us tell which of the two stored copies is newer
   transactions: [], // {id,type:'income'|'expense',amountMinor,currency,category,note,date}
+  debts: [], // {id,type:'owe'|'owed',person,currency,principalMinor,dueDate|null,note,payments:[{id,date,amountMinor,txId|null}]}
   goals: [], // {id,name,targetMinor(USD),deadline|null,contributions:[{id,date,amountMinor}]}
   rates: { bcvUsd: null, bcvEur: null, binance: null }, // {value:string,updatedAt,source,manual?}
   settings: { valuation: "bcv", customCats: { income: [], expense: [] }, lastBackup: null }, // which USD rate values the VES balance: 'bcv' | 'binance'
@@ -77,6 +78,9 @@ export function normalize(obj) {
   s.transactions = Array.isArray(s.transactions) ? s.transactions.filter((t) => t && /^\d+$/.test(String(t.amountMinor))) : [];
   s.goals = Array.isArray(s.goals)
     ? s.goals.filter((g) => g && /^\d+$/.test(String(g.targetMinor))).map((g) => ({ ...g, contributions: Array.isArray(g.contributions) ? g.contributions : [] }))
+    : [];
+  s.debts = Array.isArray(s.debts)
+    ? s.debts.filter((d) => d && /^\d+$/.test(String(d.principalMinor)) && ['owe', 'owed'].includes(d.type)).map((d) => ({ ...d, payments: Array.isArray(d.payments) ? d.payments.filter((p) => p && /^\d+$/.test(String(p.amountMinor))) : [] }))
     : [];
   return s;
 }

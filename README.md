@@ -7,6 +7,7 @@ PWA de finanzas personales para Venezuela, pensada para iPhone. Sin build, sin d
 - **Tasas**: BCV dólar, BCV euro y Binance P2P (USDT/VES), con brecha Binance vs BCV, antigüedad del dato, actualización automática cada 60 s (y al volver a abrir la app) y edición manual.
 - **Movimientos**: ingresos y egresos en USD, EUR o Bs., con categoría, nota y fecha; balance por moneda y total valorado en USD (con tasa BCV o Binance a elección).
 - **Convertir**: cualquier combinación USD/EUR/Bs. con tasa BCV, Binance o personalizada, y comparación entre fuentes.
+- **Deudas**: lo que debes y lo que te deben, con abonos, vencimientos y balance neto en USD; los abonos pueden registrarse también en Movimientos.
 - **Metas de ahorro**: objetivo en USD, fecha límite opcional, aportes, progreso y cuánto ahorrar al mes.
 - Funciona offline (service worker) y se puede exportar/importar un respaldo JSON.
 

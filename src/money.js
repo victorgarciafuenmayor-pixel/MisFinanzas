@@ -128,3 +128,28 @@ export function expensesByCategory(transactions, rates, month = null) {
   const rows = [...sums].map(([category, usd]) => ({ category, usd })).sort((a, b) => (b.usd > a.usd ? 1 : b.usd < a.usd ? -1 : 0));
   return { rows, total, skipped };
 }
+
+/** Debt progress. `debt.principalMinor` and payments are in the debt's own currency. */
+export function debtProgress(debt, today = new Date().toLocaleDateString("sv-SE")) {
+  const principal = BigInt(debt.principalMinor);
+  const paid = debt.payments.reduce((a, p) => a + BigInt(p.amountMinor), 0n);
+  const remaining = principal > paid ? principal - paid : 0n;
+  const settled = principal > 0n && paid >= principal;
+  const pct = principal === 0n ? 0 : Math.min(100, Number((paid * 10000n) / principal) / 100);
+  const overdue = !settled && !!debt.dueDate && debt.dueDate < today;
+  return { principal, paid, remaining, settled, pct, overdue };
+}
+
+/** Outstanding totals in USD: what I owe vs what I'm owed. `skipped` = debts left out for lack of a rate. */
+export function debtTotals(debts, rates) {
+  let owe = 0n, owed = 0n, skipped = 0;
+  for (const d of debts) {
+    const { remaining } = debtProgress(d);
+    if (remaining === 0n) continue;
+    try {
+      const usd = convert(remaining, d.currency, "USD", rates);
+      if (d.type === "owe") owe += usd; else owed += usd;
+    } catch { skipped++; }
+  }
+  return { owe, owed, net: owed - owe, skipped };
+}

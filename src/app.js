@@ -1,6 +1,6 @@
 import {
   CURRENCIES, SYMBOLS, parseAmount, parseRate, formatMinor, formatRate, formatScaled, minorToInput,
-  convert, balances, totalIn, goalProgress, expensesByCategory,
+  convert, balances, totalIn, goalProgress, expensesByCategory, debtProgress, debtTotals,
 } from "./money.js";
 import { fetchRates } from "./rates.js";
 import { load, save, uid, hasLocal, idbLoad, normalize } from "./store.js";
@@ -8,7 +8,7 @@ import { load, save, uid, hasLocal, idbLoad, normalize } from "./store.js";
 const REFRESH_MS = 60_000;
 const STALE_MS = 15 * 60_000;
 const CATEGORIES = {
-  income: ["Sueldo", "Freelance", "Ventas", "Remesas", "Otro"],
+  income: ["Sueldo", "Freelance", "Ventas", "Remesas", "Cobro de deuda", "Otro"],
   expense: ["Comida", "Transporte", "Servicios", "Vivienda", "Salud", "Ocio", "Deudas", "Otro"],
 };
 const RATE_CARDS = [
@@ -23,6 +23,7 @@ let tab = "rates";
 let rateErrors = {};
 let loading = false;
 let chartPeriod = "month";
+let debtFilter = "owe";
 const CHART_COLORS = ["#0d9488", "#6366f1", "#f59e0b", "#ef4444", "#22c55e", "#a855f7", "#0ea5e9", "#94a3b8"];
 const catsFor = (type) => [...new Set([...CATEGORIES[type], ...(state.settings.customCats?.[type] || [])])];
 let convertForm = { amount: "100", from: "USD", to: "VES", source: "bcv", custom: "" };
@@ -138,7 +139,7 @@ function viewChart(set) {
 
 const BACKUP_DAYS = 7;
 function backupBanner() {
-  if (!state.transactions.length && !state.goals.length) return "";
+  if (!state.transactions.length && !state.goals.length && !state.debts.length) return "";
   const last = state.settings.lastBackup;
   if (last && Date.now() - last < BACKUP_DAYS * 86400000) return "";
   return `<div class="card warnbox"><b>Protege tus datos</b><div class="muted">${last ? `Tu último respaldo fue ${ageText(last)}.` : "Aún no has hecho un respaldo."} Guárdalo en Archivos o iCloud Drive.</div>
@@ -237,6 +238,33 @@ function viewConvert() {
     <p class="muted">El euro siempre usa la tasa BCV Euro.</p>`;
 }
 
+function viewDebts() {
+  const set = rateSet(state.settings.valuation);
+  const t = debtTotals(state.debts, set);
+  const list = state.debts.filter((d) => d.type === debtFilter)
+    .sort((a, b) => Number(debtProgress(a).settled) - Number(debtProgress(b).settled) || (a.dueDate || "9999").localeCompare(b.dueDate || "9999"));
+  const count = (type) => state.debts.filter((d) => d.type === type && !debtProgress(d).settled).length;
+  const cards = list.length ? list.map((d) => {
+    const p = debtProgress(d);
+    const badge = p.settled ? '<span class="badge">pagada</span>' : p.overdue ? '<span class="badge err">vencida</span>' : "";
+    const pays = [...d.payments].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5)
+      .map((x) => `<div class="row muted" style="padding:2px 0"><span>${esc(x.date)} · ${formatMinor(BigInt(x.amountMinor), d.currency)}</span><button class="link danger" data-act="del-pay" data-id="${esc(d.id)}" data-pid="${esc(x.id)}">Quitar</button></div>`).join("");
+    return `<div class="card"><div class="row"><div class="grow"><b>${esc(d.person)}</b>${badge}
+      <div class="muted">${d.dueDate ? "Vence " + esc(d.dueDate) : "Sin fecha de vencimiento"}</div>${d.note ? `<div class="desc">${esc(d.note)}</div>` : ""}</div>
+      <div style="text-align:right"><div class="big" style="font-size:22px">${formatMinor(p.remaining, d.currency)}</div><div class="muted">de ${formatMinor(p.principal, d.currency)}</div></div></div>
+      <div class="bar"><i style="width:${p.pct}%"></i></div>
+      ${pays ? `<div style="margin-top:6px">${pays}</div>` : ""}
+      <div class="actions">${p.settled ? "" : `<button class="primary" data-act="pay-debt" data-id="${esc(d.id)}">Abonar</button>`}
+      <button data-act="edit-debt" data-id="${esc(d.id)}">Editar</button><button class="danger" data-act="del-debt" data-id="${esc(d.id)}">Eliminar</button></div></div>`;
+  }).join("") : `<div class="empty">${debtFilter === "owe" ? "No registras deudas tuyas." : "Nadie te debe, o aún no lo has registrado."}</div>`;
+  return `<div class="card hero"><div class="muted">Balance neto de deudas (en USD)</div><div class="big">${t.net < 0n ? "−" : ""}${formatMinor(t.net < 0n ? -t.net : t.net, "USD")}</div>
+    <div class="row" style="margin-top:10px"><div><div class="muted">Debo</div><div class="num">${formatMinor(t.owe, "USD")}</div></div>
+    <div style="text-align:right"><div class="muted">Me deben</div><div class="num">${formatMinor(t.owed, "USD")}</div></div></div>
+    ${t.skipped ? '<div class="muted" style="margin-top:6px">Algunas deudas no se suman por falta de tasa.</div>' : ""}</div>
+    <div class="seg" style="margin-bottom:12px"><button data-debtf="owe" aria-pressed="${debtFilter === "owe"}">Debo (${count("owe")})</button><button data-debtf="owed" aria-pressed="${debtFilter === "owed"}">Me deben (${count("owed")})</button></div>
+    <button class="primary" style="width:100%;margin-bottom:12px" data-act="add-debt">+ Nueva deuda</button>${cards}`;
+}
+
 function viewGoals() {
   const cards = state.goals.length
     ? state.goals.map((g) => {
@@ -256,13 +284,13 @@ function viewGoals() {
   return `<button class="primary" style="width:100%;margin-bottom:12px" data-act="add-goal">+ Nueva meta</button>${cards}`;
 }
 
-const TITLES = { rates: "Tasas", tx: "Movimientos", convert: "Convertir", goals: "Metas de ahorro" };
+const TITLES = { rates: "Tasas", tx: "Movimientos", convert: "Convertir", debts: "Deudas", goals: "Metas de ahorro" };
 function render() {
   $("#title").textContent = TITLES[tab];
   document.querySelectorAll(".tabs button").forEach((b) => {
     if (b.dataset.tab === tab) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
   });
-  const views = { rates: viewRates, tx: viewTx, convert: viewConvert, goals: viewGoals };
+  const views = { rates: viewRates, tx: viewTx, convert: viewConvert, debts: viewDebts, goals: viewGoals };
   const keep = document.activeElement?.id;
   $("#view").innerHTML = views[tab]();
   if (keep && tab === "convert") { const el = document.getElementById(keep); if (el) { el.focus(); if (el.setSelectionRange && el.type !== "number") try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* n/a */ } } }
@@ -323,6 +351,58 @@ function addTxDialog(existing = null) {
   fillCats(existing?.category); paintType();
   sel.onchange = () => { newcat.hidden = sel.value !== "__new__"; if (!newcat.hidden) newcat.focus(); };
   dlg.querySelectorAll("#tx-type button").forEach((b) => (b.onclick = () => { type = b.dataset.t; paintType(); fillCats(); }));
+}
+
+function debtDialog(existing = null) {
+  let type = existing?.type ?? debtFilter;
+  const dlg = dialog(`
+    <div class="seg" id="d-type"><button type="button" data-t="owe">Yo debo</button><button type="button" data-t="owed">Me deben</button></div>
+    <label for="d-person" id="d-person-l"></label><input id="d-person" name="person" maxlength="50" autocomplete="off" value="${esc(existing?.person ?? "")}">
+    <label for="d-amt">Monto de la deuda</label><input id="d-amt" name="amount" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${existing ? esc(minorToInput(BigInt(existing.principalMinor))) : ""}">
+    <label for="d-cur">Moneda</label><select id="d-cur" name="currency">${CURRENCIES.map((c) => `<option ${existing?.currency === c ? "selected" : ""}>${c}</option>`).join("")}</select>
+    <label for="d-due">Fecha de vencimiento (opcional)</label><input id="d-due" name="dueDate" type="date" value="${existing?.dueDate ?? ""}">
+    <label for="d-note">Descripción (opcional)</label><input id="d-note" name="note" maxlength="120" autocomplete="off" placeholder="Ej: Préstamo para el carro" value="${esc(existing?.note ?? "")}">`, (d) => {
+    const person = (d.person || "").trim();
+    const principal = parseAmount(d.amount);
+    if (!person) return "Escribe el nombre de la persona o entidad.";
+    if (principal === null || principal <= 0n) return "El monto debe ser mayor que cero.";
+    if (existing) {
+      const paid = existing.payments.reduce((a, p) => a + BigInt(p.amountMinor), 0n);
+      if (principal < paid && d.currency === existing.currency) return "El monto no puede ser menor que lo ya abonado.";
+      if (d.currency !== existing.currency && existing.payments.length) return "No se puede cambiar la moneda de una deuda con abonos.";
+    }
+    const rec = { type, person, currency: d.currency, principalMinor: principal.toString(), dueDate: d.dueDate || null, note: (d.note || "").trim() };
+    if (existing) Object.assign(existing, rec); else state.debts.push({ id: uid(), ...rec, payments: [] });
+    debtFilter = type;
+  });
+  const paint = () => {
+    dlg.querySelectorAll("#d-type button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.t === type)));
+    dlg.querySelector("#d-person-l").textContent = type === "owe" ? "¿A quién le debes?" : "¿Quién te debe?";
+  };
+  paint();
+  dlg.querySelectorAll("#d-type button").forEach((b) => (b.onclick = () => { type = b.dataset.t; paint(); }));
+}
+
+function payDebtDialog(id) {
+  const debt = state.debts.find((x) => x.id === id);
+  if (!debt) return;
+  const p = debtProgress(debt);
+  const isOwe = debt.type === "owe";
+  dialog(`<p>${isOwe ? "Abono a" : "Cobro de"} <b>${esc(debt.person)}</b><br><span class="muted">Pendiente: ${formatMinor(p.remaining, debt.currency)}</span></p>
+    <label for="p-amt">Monto (${debt.currency})</label><input id="p-amt" name="amount" inputmode="decimal" autocomplete="off" value="${esc(minorToInput(p.remaining))}">
+    <label for="p-date">Fecha</label><input id="p-date" name="date" type="date" value="${today()}">
+    <label style="display:flex;gap:10px;align-items:center;font-size:14px;color:var(--text);font-weight:500"><input type="checkbox" name="link" checked style="width:22px;min-height:22px;flex:none"> Registrar también como ${isOwe ? "egreso" : "ingreso"} en Movimientos</label>`, (d) => {
+    const m = parseAmount(d.amount);
+    if (m === null || m <= 0n) return "Escribe un monto mayor que cero.";
+    if (m > p.remaining) return "El monto es mayor que lo que falta por pagar.";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return "Fecha inválida.";
+    let txId = null;
+    if (d.link) {
+      txId = uid();
+      state.transactions.push({ id: txId, type: isOwe ? "expense" : "income", amountMinor: m.toString(), currency: debt.currency, category: isOwe ? "Deudas" : "Cobro de deuda", note: `${isOwe ? "Abono a" : "Cobro de"} ${debt.person}`, date: d.date });
+    }
+    debt.payments.push({ id: uid(), date: d.date, amountMinor: m.toString(), txId });
+  });
 }
 
 function addGoalDialog() {
@@ -420,6 +500,8 @@ function settingsDialog() {
 document.addEventListener("click", (e) => {
   const tabBtn = e.target.closest(".tabs button");
   if (tabBtn) { tab = tabBtn.dataset.tab; render(); return; }
+  const df = e.target.closest("[data-debtf]");
+  if (df) { debtFilter = df.dataset.debtf; render(); return; }
   const per = e.target.closest("[data-period]");
   if (per) { chartPeriod = per.dataset.period; render(); return; }
   const src = e.target.closest("[data-src]");
@@ -433,6 +515,22 @@ document.addEventListener("click", (e) => {
   else if (act === "add-tx") addTxDialog();
   else if (act === "edit-tx") addTxDialog(state.transactions.find((t) => t.id === id));
   else if (act === "del-tx") { if (confirm("¿Borrar este movimiento?")) { state.transactions = state.transactions.filter((t) => t.id !== id); persist(); render(); } }
+  else if (act === "add-debt") debtDialog();
+  else if (act === "edit-debt") debtDialog(state.debts.find((x) => x.id === id));
+  else if (act === "pay-debt") payDebtDialog(id);
+  else if (act === "del-debt") {
+    const d = state.debts.find((x) => x.id === id);
+    if (d && confirm("¿Eliminar esta deuda y sus abonos? Los movimientos ya registrados se conservan.")) { state.debts = state.debts.filter((x) => x.id !== id); persist(); render(); }
+  }
+  else if (act === "del-pay") {
+    const d = state.debts.find((x) => x.id === id);
+    const pay = d?.payments.find((x) => x.id === b.dataset.pid);
+    if (pay && confirm("¿Quitar este abono?" + (pay.txId ? " También se quitará el movimiento que creó." : ""))) {
+      d.payments = d.payments.filter((x) => x.id !== pay.id);
+      if (pay.txId) state.transactions = state.transactions.filter((t) => t.id !== pay.txId);
+      persist(); render();
+    }
+  }
   else if (act === "add-goal") addGoalDialog();
   else if (act === "contribute") contributeDialog(id);
   else if (act === "del-goal") { if (confirm("¿Eliminar esta meta y sus aportes?")) { state.goals = state.goals.filter((g) => g.id !== id); persist(); render(); } }
@@ -471,7 +569,7 @@ refreshRates();
 navigator.storage?.persist?.().catch(() => {});
 idbLoad().then((saved) => {
   if (!saved) return;
-  const hasData = saved.transactions.length || saved.goals.length;
+  const hasData = saved.transactions.length || saved.goals.length || saved.debts.length;
   // localStorage wiped -> restore; both present -> keep whichever copy is newer
   if (hadLocal ? (saved.rev || 0) > (state.rev || 0) : hasData) { state = saved; persist(); render(); }
 });
