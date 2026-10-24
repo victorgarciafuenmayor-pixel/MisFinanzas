@@ -321,7 +321,9 @@ function addTxDialog(existing = null) {
   const dlg = dialog(`
     <div class="seg" id="tx-type"><button type="button" data-t="expense">Egreso</button><button type="button" data-t="income">Ingreso</button></div>
     <label for="f-amount">Monto</label><input id="f-amount" name="amount" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${existing ? esc(minorToInput(BigInt(existing.amountMinor))) : ""}">
-    <label for="f-cur">Moneda</label><select id="f-cur" name="currency">${CURRENCIES.map((c) => `<option ${existing?.currency === c ? "selected" : ""}>${c}</option>`).join("")}</select>
+    <label>Moneda</label><input type="hidden" id="f-cur" name="currency" value="${existing?.currency ?? state.settings.lastCurrency ?? "USD"}">
+    <div class="seg" id="tx-cur">${CURRENCIES.map((c) => `<button type="button" data-c="${c}">${c === "VES" ? "Bs." : c}</button>`).join("")}</div>
+    <div class="muted" id="f-equiv" style="margin-top:6px;min-height:1.3em"></div>
     <label for="f-cat">Categoría</label><select id="f-cat" name="category"></select>
     <input id="f-newcat" name="newcat" maxlength="30" placeholder="Nombre de la nueva categoría" autocomplete="off" hidden style="margin-top:8px">
     <label for="f-note">Descripción (opcional)</label><input id="f-note" name="note" maxlength="120" autocomplete="off" placeholder="Ej: Mercado de la semana" value="${esc(existing?.note ?? "")}">
@@ -337,6 +339,7 @@ function addTxDialog(existing = null) {
       if (known) category = known;
       else state.settings.customCats[type] = [...(state.settings.customCats[type] || []), category];
     }
+    state.settings.lastCurrency = d.currency;
     const tx = { id: existing?.id ?? uid(), type, amountMinor: amountMinor.toString(), currency: d.currency, category, note: (d.note || "").trim(), date: d.date };
     if (existing) Object.assign(existing, tx); else state.transactions.push(tx);
   });
@@ -348,6 +351,16 @@ function addTxDialog(existing = null) {
     newcat.hidden = true;
   };
   const paintType = () => dlg.querySelectorAll("#tx-type button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.t === type)));
+  const cur = dlg.querySelector("#f-cur"), amt = dlg.querySelector("#f-amount"), equiv = dlg.querySelector("#f-equiv");
+  const paintCur = () => {
+    dlg.querySelectorAll("#tx-cur button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.c === cur.value)));
+    const m = parseAmount(amt.value);
+    const other = cur.value === "VES" ? "USD" : "VES";
+    try { equiv.textContent = m && m > 0n ? `≈ ${formatMinor(convert(m, cur.value, other, rateSet(state.settings.valuation)), other)}` : ""; } catch { equiv.textContent = ""; }
+  };
+  dlg.querySelectorAll("#tx-cur button").forEach((b) => (b.onclick = () => { cur.value = b.dataset.c; paintCur(); }));
+  amt.addEventListener("input", paintCur);
+  paintCur();
   fillCats(existing?.category); paintType();
   sel.onchange = () => { newcat.hidden = sel.value !== "__new__"; if (!newcat.hidden) newcat.focus(); };
   dlg.querySelectorAll("#tx-type button").forEach((b) => (b.onclick = () => { type = b.dataset.t; paintType(); fillCats(); }));
