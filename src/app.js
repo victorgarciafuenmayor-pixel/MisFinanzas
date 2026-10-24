@@ -137,6 +137,7 @@ function viewChart(set) {
     ${legend}${skipped ? `<p class="muted">${skipped} movimiento(s) no incluidos por falta de tasa.</p>` : ""}</div>`;
 }
 
+export const APP_VERSION = "2026.10.24-c";
 const BACKUP_DAYS = 7;
 function backupBanner() {
   if (!state.transactions.length && !state.goals.length && !state.debts.length) return "";
@@ -500,7 +501,8 @@ function settingsDialog() {
     <h2>Respaldo</h2>
     <p class="muted">Tus datos se guardan en este iPhone con doble copia interna. Último respaldo: ${state.settings.lastBackup ? ageText(state.settings.lastBackup) : "nunca"}. Guarda un respaldo en Archivos o iCloud Drive para no perderlos si borras la app.</p>
     <div class="actions" style="margin-top:0"><button type="button" id="s-exp">Exportar</button><button type="button" id="s-imp">Importar</button></div>
-    <input type="file" id="s-file" accept="application/json" hidden>`, (d) => {
+    <input type="file" id="s-file" accept="application/json" hidden>
+    <p class="muted" style="margin-top:14px">Versión ${APP_VERSION}</p>`, (d) => {
     const raw = (d.adjust || "").trim();
     if (raw && parseDecimal(raw, 8) === null) return "El ajuste debe ser un número.";
     state.settings.valuation = d.valuation;
@@ -582,7 +584,17 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 window.addEventListener("online", refreshRates);
 window.addEventListener("offline", renderStatus);
 
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+if ("serviceWorker" in navigator) {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((reg) => {
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update().catch(() => {}); });
+  }).catch(() => {});
+  // a new version took over: reload once so the user sees it without reopening the app twice
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hadController && !reloaded) { reloaded = true; location.reload(); }
+  });
+}
 render();
 refreshRates();
 

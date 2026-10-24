@@ -1,6 +1,6 @@
 // App-shell cache so the app opens offline. Rate APIs are never cached here
 // (the app keeps the last known rates itself and shows how old they are).
-const CACHE = "vef-shell-v2";
+const CACHE = "vef-shell-v3";
 const SHELL = [
   "./", "index.html", "styles.css", "manifest.webmanifest",
   "src/app.js", "src/money.js", "src/rates.js", "src/store.js",
@@ -22,7 +22,7 @@ self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
   // network-first so updates arrive, cache fallback for offline
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: "no-cache" }) // always revalidate with the server, never serve a stale HTTP-cached copy
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));
