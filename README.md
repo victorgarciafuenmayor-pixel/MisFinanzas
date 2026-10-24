@@ -18,17 +18,16 @@ PWA de finanzas personales para Venezuela, pensada para iPhone. Sin build, sin d
 
 Local: `npm start` (sirve en http://localhost:8080) y `npm test` para las pruebas.
 
-## Fuentes de tasas — leer esto
+## Fuentes de tasas
 
-Ninguna fuente fue verificada contra documentación oficial desde el entorno de desarrollo (sin acceso de red a esos hosts). El BCV no publica una API JSON oficial.
+El BCV no publica una API JSON oficial y Binance bloquea las consultas automáticas a sus anuncios P2P (probado: devuelve 403 tanto desde navegador como desde servidores en la nube; no se intenta eludir). Por eso:
 
-| Tasa | Fuente usada | Estado |
+| Tarjeta | Fuente | Estado |
 |---|---|---|
-| BCV USD / EUR | `https://ve.dolarapi.com/v1/dolares` y `/v1/euros` (servicio comunitario, campo `fuente: "oficial"`) | **Sin verificar en vivo** |
-| Binance | `POST https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search` (endpoint web no documentado; promedio de los 5 primeros anuncios de compra) | **No oficial; el navegador probablemente lo bloquee por CORS** |
-| Binance (respaldo) | Tasa `paralelo` de DolarApi, marcada "aproximada" | Sin verificar |
+| BCV Dólar / Euro | `https://ve.dolarapi.com/v1/dolares` y `/v1/euros` (servicio comunitario, `fuente: "oficial"`) | No oficial |
+| Binance / Paralelo | Tasa `paralelo` del mismo servicio + un **ajuste** en Bs. configurable en Ajustes | Referencia: verificada a mano contra Binance (1.001 vs 1.004), no es el precio de un anuncio |
 
-Cada fuente falla por separado: si una cae, se muestra el último valor guardado con su antigüedad y el error, o puedes fijar la tasa a mano. Si el CORS de Binance bloquea la llamada (lo esperable), la solución robusta es un pequeño proxy propio (Cloudflare Worker) que consulte Binance y devuelva el JSON; está pendiente.
+Cada fuente falla por separado: si una cae, se muestra el último valor guardado o puedes fijar la tasa a mano (Editar). Verifica con la fuente oficial antes de operaciones importantes.
 
 ## Datos y privacidad
 
@@ -40,6 +39,6 @@ Los montos se guardan como enteros (centavos) y las tasas con 8 decimales usando
 
 ## Pendiente / ideas
 
-- Proxy propio para Binance P2P y para BCV (más fiable que servicios de terceros).
+- Fuente propia/alternativa para BCV y paralelo (menos dependencia de un servicio comunitario).
 - Sincronización entre dispositivos y notificaciones push (requieren backend).
 - Editar movimientos; categorías propias; gráficos.

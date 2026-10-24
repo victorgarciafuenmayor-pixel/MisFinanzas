@@ -1,5 +1,5 @@
 import {
-  CURRENCIES, SYMBOLS, parseAmount, parseRate, formatMinor, formatRate, formatScaled, minorToInput,
+  CURRENCIES, SYMBOLS, parseAmount, parseRate, parseDecimal, formatMinor, formatRate, formatScaled, minorToInput,
   convert, balances, totalIn, goalProgress, expensesByCategory, debtProgress, debtTotals,
 } from "./money.js";
 import { fetchRates } from "./rates.js";
@@ -14,7 +14,7 @@ const CATEGORIES = {
 const RATE_CARDS = [
   { key: "bcvUsd", label: "BCV Dólar", sub: "Bs. por 1 USD", icon: "USD" },
   { key: "bcvEur", label: "BCV Euro", sub: "Bs. por 1 EUR", icon: "EUR" },
-  { key: "binance", label: "Binance P2P", sub: "Bs. por 1 USDT", icon: "P2P" },
+  { key: "binance", label: "Binance / Paralelo", sub: "Bs. por 1 USDT", icon: "P2P" },
 ];
 
 const hadLocal = hasLocal();
@@ -60,7 +60,7 @@ async function refreshRates() {
   loading = true;
   renderStatus();
   try {
-    const res = await fetchRates({ binanceUrl: state.settings.binanceProxy });
+    const res = await fetchRates({ parallelAdjust: parseDecimal(state.settings.parallelAdjust, 8) ?? 0n });
     rateErrors = {};
     for (const [key, r] of Object.entries(res)) {
       if (r.error) { rateErrors[key] = r.error; continue; }
@@ -94,7 +94,7 @@ function viewRates() {
     const stale = r && !r.manual && Date.now() - (r.fetchedAt || 0) > STALE_MS;
     const badges = [
       r?.manual ? '<span class="badge warn">manual</span>' : "",
-      r?.approx ? '<span class="badge warn">aproximada</span>' : "",
+      
       err ? '<span class="badge err">sin conexión</span>' : "",
       stale && !err ? '<span class="badge warn">desactualizada</span>' : "",
     ].join("");
@@ -481,16 +481,17 @@ function settingsDialog() {
     <label for="s-val">Valorar el balance con</label>
     <select id="s-val" name="valuation"><option value="bcv" ${state.settings.valuation === "bcv" ? "selected" : ""}>Tasa BCV</option><option value="binance" ${state.settings.valuation === "binance" ? "selected" : ""}>Tasa Binance</option></select>
     <h2>Tasa Binance</h2>
-    <label for="s-proxy">Dirección del servidor de Binance (opcional)</label>
-    <input id="s-proxy" name="proxy" inputmode="url" autocapitalize="off" autocomplete="off" placeholder="https://…workers.dev" value="${esc(state.settings.binanceProxy)}">
+    <label for="s-adj">Ajuste sobre la tasa paralelo (Bs.)</label>
+    <input id="s-adj" name="adjust" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(state.settings.parallelAdjust)}">
+    <p class="muted">Se suma a la tasa de referencia para acercarla al precio que ves en Binance. Ej: 3</p>
     <h2>Respaldo</h2>
     <p class="muted">Tus datos se guardan en este iPhone con doble copia interna. Último respaldo: ${state.settings.lastBackup ? ageText(state.settings.lastBackup) : "nunca"}. Guarda un respaldo en Archivos o iCloud Drive para no perderlos si borras la app.</p>
     <div class="actions" style="margin-top:0"><button type="button" id="s-exp">Exportar</button><button type="button" id="s-imp">Importar</button></div>
     <input type="file" id="s-file" accept="application/json" hidden>`, (d) => {
-    const proxy = (d.proxy || "").trim();
-    if (proxy && !/^https:\/\/[^\s]+$/.test(proxy)) return "La dirección debe empezar con https://";
+    const raw = (d.adjust || "").trim();
+    if (raw && parseDecimal(raw, 8) === null) return "El ajuste debe ser un número.";
     state.settings.valuation = d.valuation;
-    if (proxy !== state.settings.binanceProxy) { state.settings.binanceProxy = proxy; setTimeout(refreshRates, 0); }
+    if (raw !== state.settings.parallelAdjust) { state.settings.parallelAdjust = raw; setTimeout(refreshRates, 0); }
   });
   dlg.querySelector("#s-exp").onclick = () => exportBackup().then((ok) => ok && render()).catch(() => { dlg.querySelector("#dlg-err").textContent = "No se pudo crear el respaldo."; });
   const file = dlg.querySelector("#s-file");

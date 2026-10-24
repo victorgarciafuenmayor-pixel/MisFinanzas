@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   parseAmount, parseRate, convert, expensesByCategory, debtProgress, debtTotals, balances, totalIn, goalProgress, formatMinor, formatRate, minorToInput,
 } from "../src/money.js";
-import { parseDolarApi, parseBinanceP2P } from "../src/rates.js";
+import { parseDolarApi, fetchRates } from "../src/rates.js";
 import { normalize, defaultState } from "../src/store.js";
 
 const R = (x) => parseRate(x);
@@ -64,10 +64,18 @@ test("DolarApi parsing picks the right fuente and rejects junk", () => {
   assert.throws(() => parseDolarApi({}, "oficial"));
 });
 
-test("Binance parsing picks the lowest ad price exactly", () => {
-  const json = { data: ["40.20", "40.00", "40.10", "oops"].map((price) => ({ adv: { price } })) };
-  assert.equal(parseBinanceP2P(json).value, R("40"));
-  assert.throws(() => parseBinanceP2P({ data: [] }));
+test("Binance card = paralelo rate plus adjustment, BCV untouched", async () => {
+  const realFetch = globalThis.fetch;
+  const body = (url) => (url.includes("euros") ? [{ fuente: "oficial", promedio: 1100 }] : [{ fuente: "oficial", promedio: 990.5 }, { fuente: "paralelo", promedio: 1001 }]);
+  globalThis.fetch = async (url) => ({ ok: true, json: async () => body(String(url)) });
+  try {
+    const r = await fetchRates({ parallelAdjust: R("3") });
+    assert.equal(r.binance.value, R("1004"));
+    assert.equal(r.bcvUsd.value, R("990.5"));
+    assert.equal((await fetchRates()).binance.value, R("1001"));
+    globalThis.fetch = async () => { throw new Error("sin conexión"); };
+    assert.ok((await fetchRates()).binance.error);
+  } finally { globalThis.fetch = realFetch; }
 });
 
 test("store normalize drops corrupt records", () => {
