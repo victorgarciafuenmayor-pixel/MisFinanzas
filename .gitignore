@@ -1,0 +1,3 @@
+# build artifact for hosting upload
+*.zip
+node_modules/
