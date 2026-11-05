@@ -1,6 +1,6 @@
 import {
   CURRENCIES, SYMBOLS, parseAmount, parseRate, parseDecimal, formatMinor, formatRate, formatScaled, minorToInput,
-  convert, balances, totalIn, goalProgress, expensesByCategory, debtProgress, debtTotals, accountsTotal,
+  convert, balances, totalIn, goalProgress, expensesByCategory, debtProgress, debtTotals, accountsTotal, applyAccountMove,
 } from "./money.js";
 import { fetchRates } from "./rates.js";
 import { load, save, uid, hasLocal, idbLoad, normalize } from "./store.js";
@@ -137,7 +137,7 @@ function viewChart(set) {
     ${legend}${skipped ? `<p class="muted">${skipped} movimiento(s) no incluidos por falta de tasa.</p>` : ""}</div>`;
 }
 
-export const APP_VERSION = "2026.11.05-a";
+export const APP_VERSION = "2026.11.05-b";
 const BACKUP_DAYS = 7;
 function backupBanner() {
   if (!state.transactions.length && !state.goals.length && !state.debts.length && !state.accounts.length) return "";
@@ -239,13 +239,23 @@ function viewConvert() {
     <p class="muted">El euro siempre usa la tasa BCV Euro.</p>`;
 }
 
+function hist(a) {
+  const rows = [...a.history].sort((x, y) => y.date.localeCompare(x.date) || y.id.localeCompare(x.id)).slice(0, 5).map((h) => `
+    <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><div class="grow"><span class="num ${h.kind === "in" ? "income" : "expense"}">${h.kind === "in" ? "+" : "−"}${formatMinor(BigInt(h.amountMinor), a.currency)}</span>
+    <span class="muted"> · ${esc(h.date)}${h.note ? " · " + esc(h.note) : ""}</span></div>
+    <button class="link danger" data-act="del-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Quitar</button></div>`).join("");
+  return rows ? `<div style="margin-top:10px">${rows}</div>` : "";
+}
+
 function viewAccounts() {
   const set = rateSet(state.settings.valuation);
   const { total, skipped } = accountsTotal(state.accounts, set);
   const cards = state.accounts.length ? state.accounts.map((a) => `
     <div class="card"><div class="row"><div class="grow"><b>${esc(a.name)}</b><div class="muted">${a.currency === "VES" ? "Bs." : a.currency} · actualizado ${esc(ageText(a.updatedAt))}</div></div>
       <div class="big" style="font-size:24px">${formatMinor(BigInt(a.balanceMinor), a.currency)}</div></div>
-      <div class="actions"><button class="primary" data-act="set-balance" data-id="${esc(a.id)}">Actualizar saldo</button>
+      ${hist(a)}
+      <div class="actions"><button class="primary" data-act="acc-move" data-id="${esc(a.id)}">Registrar gasto o depósito</button></div>
+      <div class="actions" style="margin-top:8px"><button data-act="set-balance" data-id="${esc(a.id)}">Actualizar saldo</button>
       <button data-act="edit-account" data-id="${esc(a.id)}">Editar</button><button class="danger" data-act="del-account" data-id="${esc(a.id)}">Eliminar</button></div></div>`).join("")
     : '<div class="empty">Agrega tus cuentas (bancos, efectivo, Binance…) y el saldo que tienes en cada una.</div>';
   return `<div class="card hero"><div class="muted">Total en tus cuentas (≈ USD)</div><div class="big">${state.accounts.length ? formatMinor(total, "USD") : "—"}</div>
@@ -447,12 +457,53 @@ function accountDialog(existing = null) {
     const changed = !existing || existing.balanceMinor !== bal.toString() || existing.currency !== d.currency;
     const rec = { name, currency: d.currency, balanceMinor: bal.toString() };
     if (existing) Object.assign(existing, rec, changed ? { updatedAt: Date.now() } : {});
-    else state.accounts.push({ id: uid(), ...rec, updatedAt: Date.now() });
+    else state.accounts.push({ id: uid(), ...rec, updatedAt: Date.now(), history: [] });
   });
   const dlg = $("#dlg"), cur = dlg.querySelector("#a-cur");
   const paint = () => dlg.querySelectorAll("#a-curseg button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.c === cur.value)));
   dlg.querySelectorAll("#a-curseg button").forEach((b) => (b.onclick = () => { cur.value = b.dataset.c; paint(); }));
   paint();
+}
+
+function accountMoveDialog(id) {
+  const acc = state.accounts.find((x) => x.id === id);
+  if (!acc) return;
+  let kind = "out";
+  const dlg = dialog(`<p><b>${esc(acc.name)}</b><br><span class="muted">Saldo actual: ${formatMinor(BigInt(acc.balanceMinor), acc.currency)}</span></p>
+    <div class="seg" id="m-kind"><button type="button" data-k="out">Gasto</button><button type="button" data-k="in">Depósito</button></div>
+    <label for="m-amt">Monto (${acc.currency === "VES" ? "Bs." : acc.currency})</label><input id="m-amt" name="amount" inputmode="decimal" autocomplete="off" placeholder="0,00">
+    <div class="muted" id="m-after" style="margin-top:6px;min-height:1.3em"></div>
+    <label for="m-note">Descripción (opcional)</label><input id="m-note" name="note" maxlength="120" autocomplete="off" placeholder="Ej: Supermercado">
+    <label for="m-date">Fecha</label><input id="m-date" name="date" type="date" value="${today()}">
+    <label style="display:flex;gap:10px;align-items:center;font-size:14px;color:var(--text);font-weight:500"><input type="checkbox" id="m-link" name="link" style="width:22px;min-height:22px;flex:none"> Registrar también en Movimientos</label>
+    <div id="m-catwrap" hidden><label for="m-cat">Categoría</label><select id="m-cat" name="category"></select></div>`, (d) => {
+    const m = parseAmount(d.amount);
+    if (m === null || m <= 0n) return "Escribe un monto mayor que cero.";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return "Fecha inválida.";
+    const next = applyAccountMove(acc.balanceMinor, kind, m);
+    if (next === null) return `El gasto es mayor que el saldo de la cuenta (${formatMinor(BigInt(acc.balanceMinor), acc.currency)}).`;
+    let txId = null;
+    if (d.link) {
+      txId = uid();
+      state.transactions.push({ id: txId, type: kind === "in" ? "income" : "expense", amountMinor: m.toString(), currency: acc.currency, category: d.category, note: (d.note || "").trim() || acc.name, date: d.date });
+    }
+    acc.history.push({ id: uid(), kind, amountMinor: m.toString(), note: (d.note || "").trim(), date: d.date, txId });
+    acc.balanceMinor = next.toString();
+    acc.updatedAt = Date.now();
+  });
+  const amt = dlg.querySelector("#m-amt"), after = dlg.querySelector("#m-after"), link = dlg.querySelector("#m-link"), cat = dlg.querySelector("#m-cat"), wrap = dlg.querySelector("#m-catwrap");
+  const paint = () => {
+    dlg.querySelectorAll("#m-kind button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.k === kind)));
+    cat.innerHTML = catsFor(kind === "in" ? "income" : "expense").map((c) => `<option>${esc(c)}</option>`).join("");
+    const m = parseAmount(amt.value);
+    const next = m && m > 0n ? applyAccountMove(acc.balanceMinor, kind, m) : undefined;
+    after.textContent = next === undefined ? "" : next === null ? "El monto supera el saldo disponible." : `Saldo después: ${formatMinor(next, acc.currency)}`;
+  };
+  dlg.querySelectorAll("#m-kind button").forEach((b) => (b.onclick = () => { kind = b.dataset.k; paint(); }));
+  amt.addEventListener("input", paint);
+  link.onchange = () => { wrap.hidden = !link.checked; };
+  paint();
+  amt.focus();
 }
 
 function balanceDialog(id) {
@@ -591,6 +642,19 @@ document.addEventListener("click", (e) => {
   else if (act === "add-account") accountDialog();
   else if (act === "edit-account") accountDialog(state.accounts.find((x) => x.id === id));
   else if (act === "set-balance") balanceDialog(id);
+  else if (act === "acc-move") accountMoveDialog(id);
+  else if (act === "del-acc-move") {
+    const a = state.accounts.find((x) => x.id === id);
+    const h = a?.history.find((x) => x.id === b.dataset.mid);
+    if (h && confirm("¿Quitar este movimiento? El saldo de la cuenta se corrige" + (h.txId ? " y también se quita el de Movimientos." : "."))) {
+      const back = applyAccountMove(a.balanceMinor, h.kind === "in" ? "out" : "in", h.amountMinor);
+      if (back === null) { alert("No se puede quitar: el saldo quedaría negativo."); return; }
+      a.balanceMinor = back.toString(); a.updatedAt = Date.now();
+      a.history = a.history.filter((x) => x.id !== h.id);
+      if (h.txId) state.transactions = state.transactions.filter((t) => t.id !== h.txId);
+      persist(); render();
+    }
+  }
   else if (act === "del-account") {
     if (confirm("¿Eliminar esta cuenta? Tus movimientos y deudas no se modifican.")) { state.accounts = state.accounts.filter((x) => x.id !== id); persist(); render(); }
   }

@@ -7,7 +7,7 @@ export const defaultState = () => ({
   rev: 0, // bumped on every save; lets us tell which of the two stored copies is newer
   transactions: [], // {id,type:'income'|'expense',amountMinor,currency,category,note,date}
   debts: [], // {id,type:'owe'|'owed',person,currency,principalMinor,dueDate|null,note,payments:[{id,date,amountMinor,txId|null}]}
-  accounts: [], // {id,name,currency,balanceMinor,updatedAt} — standalone balances, independent of transactions
+  accounts: [], // {id,name,currency,balanceMinor,updatedAt,history:[{id,kind:'in'|'out',amountMinor,note,date,txId|null}]} — standalone balances, independent of transactions
   goals: [], // {id,name,targetMinor(USD),deadline|null,contributions:[{id,date,amountMinor}]}
   rates: { bcvUsd: null, bcvEur: null, binance: null }, // {value:string,updatedAt,source,manual?}
   settings: { valuation: "bcv", customCats: { income: [], expense: [] }, lastBackup: null, parallelAdjust: "", lastCurrency: "USD" }, // which USD rate values the VES balance: 'bcv' | 'binance'
@@ -85,6 +85,7 @@ export function normalize(obj) {
     : [];
   s.accounts = Array.isArray(s.accounts)
     ? s.accounts.filter((a) => a && typeof a.name === 'string' && /^\d+$/.test(String(a.balanceMinor)) && ['USD', 'EUR', 'VES'].includes(a.currency))
+        .map((a) => ({ ...a, history: Array.isArray(a.history) ? a.history.filter((h) => h && ['in', 'out'].includes(h.kind) && /^\d+$/.test(String(h.amountMinor))) : [] }))
     : [];
   return s;
 }

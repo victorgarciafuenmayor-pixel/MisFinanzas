@@ -162,3 +162,9 @@ export function accountsTotal(accounts, rates) {
   }
   return { total, skipped };
 }
+
+/** New account balance after an outflow ("out") or deposit ("in"); null if it would go below zero. */
+export function applyAccountMove(balanceMinor, kind, amountMinor) {
+  const next = BigInt(balanceMinor) + (kind === "in" ? BigInt(amountMinor) : -BigInt(amountMinor));
+  return next < 0n ? null : next;
+}

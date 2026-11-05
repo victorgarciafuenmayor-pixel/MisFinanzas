@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  parseAmount, parseRate, convert, expensesByCategory, debtProgress, debtTotals, accountsTotal, balances, totalIn, goalProgress, formatMinor, formatRate, minorToInput,
+  parseAmount, parseRate, convert, expensesByCategory, debtProgress, debtTotals, accountsTotal, applyAccountMove, balances, totalIn, goalProgress, formatMinor, formatRate, minorToInput,
 } from "../src/money.js";
 import { parseDolarApi, fetchRates } from "../src/rates.js";
 import { normalize, defaultState } from "../src/store.js";
@@ -138,4 +138,14 @@ test("accounts total in USD, independent from transactions", () => {
   const s = normalize({ accounts: [{ name: "A", currency: "USD", balanceMinor: "5" }, { name: "B", currency: "XXX", balanceMinor: "5" }, { name: "C", currency: "USD", balanceMinor: "-1" }, null] });
   assert.equal(s.accounts.length, 1);
   assert.deepEqual(balances([]), { USD: 0n, EUR: 0n, VES: 0n }); // accounts never feed the ledger
+});
+
+test("account movements adjust the balance and never go negative", () => {
+  assert.equal(applyAccountMove("6000", "out", "4000"), 2000n); // Provincial: $60 - $40 = $20
+  assert.equal(applyAccountMove("2000", "in", "500"), 2500n);
+  assert.equal(applyAccountMove("2000", "out", "2000"), 0n);
+  assert.equal(applyAccountMove("2000", "out", "2001"), null);
+  const s = normalize({ accounts: [{ name: "A", currency: "USD", balanceMinor: "5", history: [{ kind: "out", amountMinor: "1" }, { kind: "x", amountMinor: "1" }] }, { name: "B", currency: "USD", balanceMinor: "5" }] });
+  assert.equal(s.accounts[0].history.length, 1);
+  assert.deepEqual(s.accounts[1].history, []);
 });
