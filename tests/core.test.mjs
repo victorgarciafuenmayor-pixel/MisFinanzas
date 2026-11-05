@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  parseAmount, parseRate, convert, expensesByCategory, debtProgress, debtTotals, balances, totalIn, goalProgress, formatMinor, formatRate, minorToInput,
+  parseAmount, parseRate, convert, expensesByCategory, debtProgress, debtTotals, accountsTotal, balances, totalIn, goalProgress, formatMinor, formatRate, minorToInput,
 } from "../src/money.js";
 import { parseDolarApi, fetchRates } from "../src/rates.js";
 import { normalize, defaultState } from "../src/store.js";
@@ -122,4 +122,20 @@ test("store normalize keeps valid debts only", () => {
   const s = normalize({ debts: [{ type: "owe", principalMinor: "5" }, { type: "x", principalMinor: "5" }, { type: "owed", principalMinor: "z" }] });
   assert.equal(s.debts.length, 1);
   assert.deepEqual(s.debts[0].payments, []);
+});
+
+test("accounts total in USD, independent from transactions", () => {
+  const rates = { USD: R("36.5"), EUR: R("40") };
+  const accs = [
+    { currency: "USD", balanceMinor: "2000" },
+    { currency: "USD", balanceMinor: "5000" },
+    { currency: "USD", balanceMinor: "6000" },
+    { currency: "VES", balanceMinor: "365000" }, // Bs. 3.650 = $100
+  ];
+  assert.equal(accountsTotal(accs, rates).total, 23000n);
+  assert.equal(accountsTotal([{ currency: "EUR", balanceMinor: "100" }], { USD: R("36.5") }).skipped, 1);
+  assert.equal(accountsTotal([], rates).total, 0n);
+  const s = normalize({ accounts: [{ name: "A", currency: "USD", balanceMinor: "5" }, { name: "B", currency: "XXX", balanceMinor: "5" }, { name: "C", currency: "USD", balanceMinor: "-1" }, null] });
+  assert.equal(s.accounts.length, 1);
+  assert.deepEqual(balances([]), { USD: 0n, EUR: 0n, VES: 0n }); // accounts never feed the ledger
 });

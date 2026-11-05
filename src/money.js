@@ -153,3 +153,12 @@ export function debtTotals(debts, rates) {
   }
   return { owe, owed, net: owed - owe, skipped };
 }
+
+/** Sum of account balances in USD. `skipped` = accounts left out for lack of a rate. Purely informational. */
+export function accountsTotal(accounts, rates) {
+  let total = 0n, skipped = 0;
+  for (const a of accounts) {
+    try { total += convert(BigInt(a.balanceMinor), a.currency, "USD", rates); } catch { skipped++; }
+  }
+  return { total, skipped };
+}
