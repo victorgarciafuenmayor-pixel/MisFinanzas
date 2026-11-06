@@ -29,6 +29,8 @@ const catsFor = (type) => [...new Set([...CATEGORIES[type], ...(state.settings.c
 let convertForm = { amount: "100", from: "USD", to: "VES", source: "bcv", custom: "" };
 
 const $ = (s) => document.querySelector(s);
+/** Newest date first; within the same date, the most recently added entry (later in the array) first. */
+const newestFirst = (list) => list.map((x, i) => [x, i]).sort(([a, i], [b, j]) => b.date.localeCompare(a.date) || j - i).map(([x]) => x);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const persist = () => save(state);
 const today = () => new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD in local time
@@ -137,7 +139,7 @@ function viewChart(set) {
     ${legend}${skipped ? `<p class="muted">${skipped} movimiento(s) no incluidos por falta de tasa.</p>` : ""}</div>`;
 }
 
-export const APP_VERSION = "2026.11.05-b";
+export const APP_VERSION = "2026.11.06-a";
 const BACKUP_DAYS = 7;
 function backupBanner() {
   if (!state.transactions.length && !state.goals.length && !state.debts.length && !state.accounts.length) return "";
@@ -179,7 +181,7 @@ function viewTx() {
     } catch { partial = true; }
   }
   const balRows = CURRENCIES.map((c) => `<div class="row"><span class="muted">${c}</span><span class="num">${formatMinor(bal[c], c)}</span></div>`).join("");
-  const list = [...state.transactions].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+  const list = newestFirst(state.transactions);
   const items = list.length
     ? list.map((t) => `<div class="card tx"><div class="row"><span class="chip ${t.type}">${t.type === "income" ? "↓" : "↑"}</span><div class="grow"><b>${esc(t.category)}</b><div class="muted">${esc(t.date)}</div>${t.note ? `<div class="desc">${esc(t.note)}</div>` : ""}</div>
       <div style="text-align:right"><div class="num ${t.type}">${t.type === "income" ? "+" : "−"}${formatMinor(BigInt(t.amountMinor), t.currency)}</div>
@@ -240,7 +242,7 @@ function viewConvert() {
 }
 
 function hist(a) {
-  const rows = [...a.history].sort((x, y) => y.date.localeCompare(x.date) || y.id.localeCompare(x.id)).slice(0, 5).map((h) => `
+  const rows = newestFirst(a.history).slice(0, 5).map((h) => `
     <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><div class="grow"><span class="num ${h.kind === "in" ? "income" : "expense"}">${h.kind === "in" ? "+" : "−"}${formatMinor(BigInt(h.amountMinor), a.currency)}</span>
     <span class="muted"> · ${esc(h.date)}${h.note ? " · " + esc(h.note) : ""}</span></div>
     <button class="link danger" data-act="del-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Quitar</button></div>`).join("");
@@ -273,7 +275,7 @@ function viewDebts() {
   const cards = list.length ? list.map((d) => {
     const p = debtProgress(d);
     const badge = p.settled ? '<span class="badge">pagada</span>' : p.overdue ? '<span class="badge err">vencida</span>' : "";
-    const pays = [...d.payments].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5)
+    const pays = newestFirst(d.payments).slice(0, 5)
       .map((x) => `<div class="row muted" style="padding:2px 0"><span>${esc(x.date)} · ${formatMinor(BigInt(x.amountMinor), d.currency)}</span><button class="link danger" data-act="del-pay" data-id="${esc(d.id)}" data-pid="${esc(x.id)}">Quitar</button></div>`).join("");
     return `<div class="card"><div class="row"><div class="grow"><b>${esc(d.person)}</b>${badge}
       <div class="muted">${d.dueDate ? "Vence " + esc(d.dueDate) : "Sin fecha de vencimiento"}</div>${d.note ? `<div class="desc">${esc(d.note)}</div>` : ""}</div>
