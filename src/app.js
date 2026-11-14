@@ -31,6 +31,17 @@ let convertForm = { amount: "100", from: "USD", to: "VES", source: "bcv", custom
 const $ = (s) => document.querySelector(s);
 /** Newest date first; within the same date, the most recently added entry (later in the array) first. */
 const newestFirst = (list) => list.map((x, i) => [x, i]).sort(([a, i], [b, j]) => b.date.localeCompare(a.date) || j - i).map(([x]) => x);
+const expandedLists = new Set();
+const HIST_PREVIEW = 5;
+/** Renders newest-first rows; first 5 by default, "Ver todos" reveals the rest in a scrollable box. */
+function expandableList(key, items, renderRow, wrapStyle = "margin-top:10px") {
+  if (!items.length) return "";
+  const open = expandedLists.has(key);
+  const shown = open ? items : items.slice(0, HIST_PREVIEW);
+  const toggle = items.length > HIST_PREVIEW
+    ? `<button class="link" data-act="toggle-list" data-key="${esc(key)}">${open ? "Ver menos" : `Ver todos (${items.length})`}</button>` : "";
+  return `<div style="${wrapStyle}"><div ${open ? 'style="max-height:45vh;overflow-y:auto"' : ""}>${shown.map(renderRow).join("")}</div>${toggle}</div>`;
+}
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const persist = () => save(state);
 const today = () => new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD in local time
@@ -139,7 +150,7 @@ function viewChart(set) {
     ${legend}${skipped ? `<p class="muted">${skipped} movimiento(s) no incluidos por falta de tasa.</p>` : ""}</div>`;
 }
 
-export const APP_VERSION = "2026.11.06-a";
+export const APP_VERSION = "2026.11.14-a";
 const BACKUP_DAYS = 7;
 function backupBanner() {
   if (!state.transactions.length && !state.goals.length && !state.debts.length && !state.accounts.length) return "";
@@ -242,11 +253,10 @@ function viewConvert() {
 }
 
 function hist(a) {
-  const rows = newestFirst(a.history).slice(0, 5).map((h) => `
+  return expandableList("acc:" + a.id, newestFirst(a.history), (h) => `
     <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><div class="grow"><span class="num ${h.kind === "in" ? "income" : "expense"}">${h.kind === "in" ? "+" : "−"}${formatMinor(BigInt(h.amountMinor), a.currency)}</span>
     <span class="muted"> · ${esc(h.date)}${h.note ? " · " + esc(h.note) : ""}</span></div>
-    <button class="link danger" data-act="del-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Quitar</button></div>`).join("");
-  return rows ? `<div style="margin-top:10px">${rows}</div>` : "";
+    <button class="link danger" data-act="del-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Quitar</button></div>`);
 }
 
 function viewAccounts() {
@@ -275,13 +285,12 @@ function viewDebts() {
   const cards = list.length ? list.map((d) => {
     const p = debtProgress(d);
     const badge = p.settled ? '<span class="badge">pagada</span>' : p.overdue ? '<span class="badge err">vencida</span>' : "";
-    const pays = newestFirst(d.payments).slice(0, 5)
-      .map((x) => `<div class="row muted" style="padding:2px 0"><span>${esc(x.date)} · ${formatMinor(BigInt(x.amountMinor), d.currency)}</span><button class="link danger" data-act="del-pay" data-id="${esc(d.id)}" data-pid="${esc(x.id)}">Quitar</button></div>`).join("");
+    const pays = expandableList("debt:" + d.id, newestFirst(d.payments), (x) => `<div class="row muted" style="padding:2px 0"><span>${esc(x.date)} · ${formatMinor(BigInt(x.amountMinor), d.currency)}</span><button class="link danger" data-act="del-pay" data-id="${esc(d.id)}" data-pid="${esc(x.id)}">Quitar</button></div>`, "margin-top:6px");
     return `<div class="card"><div class="row"><div class="grow"><b>${esc(d.person)}</b>${badge}
       <div class="muted">${d.dueDate ? "Vence " + esc(d.dueDate) : "Sin fecha de vencimiento"}</div>${d.note ? `<div class="desc">${esc(d.note)}</div>` : ""}</div>
       <div style="text-align:right"><div class="big" style="font-size:22px">${formatMinor(p.remaining, d.currency)}</div><div class="muted">de ${formatMinor(p.principal, d.currency)}</div></div></div>
       <div class="bar"><i style="width:${p.pct}%"></i></div>
-      ${pays ? `<div style="margin-top:6px">${pays}</div>` : ""}
+      ${pays}
       <div class="actions">${p.settled ? "" : `<button class="primary" data-act="pay-debt" data-id="${esc(d.id)}">Abonar</button>`}
       <button data-act="edit-debt" data-id="${esc(d.id)}">Editar</button><button class="danger" data-act="del-debt" data-id="${esc(d.id)}">Eliminar</button></div></div>`;
   }).join("") : `<div class="empty">${debtFilter === "owe" ? "No registras deudas tuyas." : "Nadie te debe, o aún no lo has registrado."}</div>`;
@@ -667,6 +676,7 @@ document.addEventListener("click", (e) => {
     const d = state.debts.find((x) => x.id === id);
     if (d && confirm("¿Eliminar esta deuda y sus abonos? Los movimientos ya registrados se conservan.")) { state.debts = state.debts.filter((x) => x.id !== id); persist(); render(); }
   }
+  else if (act === "toggle-list") { const k = b.dataset.key; if (expandedLists.has(k)) expandedLists.delete(k); else expandedLists.add(k); render(); }
   else if (act === "del-pay") {
     const d = state.debts.find((x) => x.id === id);
     const pay = d?.payments.find((x) => x.id === b.dataset.pid);
