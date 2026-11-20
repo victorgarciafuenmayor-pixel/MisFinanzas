@@ -10,7 +10,7 @@ export const defaultState = () => ({
   accounts: [], // {id,name,currency,balanceMinor,updatedAt,history:[{id,kind:'in'|'out',amountMinor,note,date,txId|null}]} — standalone balances, independent of transactions
   goals: [], // {id,name,targetMinor(USD),deadline|null,contributions:[{id,date,amountMinor}]}
   rates: { bcvUsd: null, bcvEur: null, binance: null }, // {value:string,updatedAt,source,manual?}
-  settings: { valuation: "bcv", customCats: { income: [], expense: [] }, lastBackup: null, parallelAdjust: "", lastCurrency: "USD" }, // which USD rate values the VES balance: 'bcv' | 'binance'
+  settings: { valuation: "bcv", theme: "system", customCats: { income: [], expense: [] }, lastBackup: null, parallelAdjust: "", lastCurrency: "USD" }, // which USD rate values the VES balance: 'bcv' | 'binance'
 });
 
 export function load(storage = globalThis.localStorage) {
