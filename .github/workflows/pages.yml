@@ -30,7 +30,7 @@ jobs:
       - name: Preparar sitio
         run: |
           mkdir _site
-          cp -r index.html manifest.webmanifest sw.js styles.css src icons _site/
+          cp -r index.html manifest.webmanifest sw.js styles.css theme.css src icons _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
