@@ -11,6 +11,7 @@ PWA de finanzas personales para Venezuela, pensada para iPhone. Sin build, sin d
 - **Deudas**: lo que debes y lo que te deben, con abonos, vencimientos y balance neto en USD; los abonos pueden registrarse también en Movimientos.
 - **Metas de ahorro**: objetivo en USD, fecha límite opcional, aportes, progreso y cuánto ahorrar al mes.
 - Funciona offline (service worker) y se puede exportar/importar un respaldo JSON.
+- Interfaz con temas claro y oscuro; el botón del encabezado cambia entre ambos, y Ajustes permite seguir el tema del teléfono.
 
 ## Instalar en el iPhone
 
