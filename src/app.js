@@ -20,6 +20,7 @@ const RATE_CARDS = [
 const hadLocal = hasLocal();
 let state = load();
 let tab = "rates";
+let moreOpen = false;
 let rateErrors = {};
 let loading = false;
 let chartPeriod = "month";
@@ -29,6 +30,13 @@ const catsFor = (type) => [...new Set([...CATEGORIES[type], ...(state.settings.c
 let convertForm = { amount: "100", from: "USD", to: "VES", source: "bcv", custom: "" };
 
 const $ = (s) => document.querySelector(s);
+function applyTheme() {
+  const chosen = state.settings.theme || "system";
+  const dark = chosen === "dark" || (chosen === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  const button = document.querySelector(".theme-toggle");
+  if (button) button.setAttribute("aria-label", dark ? "Activar modo claro" : "Activar modo oscuro");
+}
 /** Newest date first; within the same date, the most recently added entry (later in the array) first. */
 const newestFirst = (list) => list.map((x, i) => [x, i]).sort(([a, i], [b, j]) => b.date.localeCompare(a.date) || j - i).map(([x]) => x);
 const expandedLists = new Set();
@@ -95,32 +103,30 @@ function renderStatus() {
 
 /* ---------- views ---------- */
 function viewRates() {
-  const bcv = rateVal("bcvUsd"), bin = rateVal("binance");
-  let spread = "";
-  if (bcv && bin) {
-    const bp = ((bin - bcv) * 10000n) / bcv;
-    spread = `<div class="card"><div class="muted">Brecha Binance vs BCV (USD)</div><div class="big">${bp > 0n ? "+" : ""}${formatScaled(bp, 2)}%</div></div>`;
-  }
-  const cards = RATE_CARDS.map(({ key, label, sub, icon }) => {
+  const value = (key) => state.rates[key] ? `Bs. ${formatRate(BigInt(state.rates[key].value))}` : "Sin tasa";
+  const detail = (key) => {
     const r = state.rates[key];
-    const err = rateErrors[key];
-    const stale = r && !r.manual && Date.now() - (r.fetchedAt || 0) > STALE_MS;
-    const badges = [
-      r?.manual ? '<span class="badge warn">manual</span>' : "",
-      
-      err ? '<span class="badge err">sin conexión</span>' : "",
-      stale && !err ? '<span class="badge warn">desactualizada</span>' : "",
-    ].join("");
-    return `<div class="card" data-rate="${key}">
-      <div class="row"><span class="chip">${icon}</span><div class="grow"><div><b>${label}</b>${badges}</div><div class="muted">${sub}</div></div>
-      <div class="big">${r ? formatRate(BigInt(r.value)) : "—"}</div></div>
-      <div class="row muted" style="margin-top:8px"><span>${r ? esc(r.source || "") + " · " + ageText(r.manual ? r.updatedAt : r.updatedAt || r.fetchedAt) : "Sin datos todavía"}</span>
-      <span><button class="link" data-act="manual" data-key="${key}">Editar</button>${r?.manual ? `<button class="link" data-act="auto" data-key="${key}">Auto</button>` : ""}</span></div>
-    </div>`;
-  }).join("");
-  return `${cards}${spread}
-    <button class="primary" style="width:100%" data-act="refresh">Actualizar ahora</button>
-    <p class="muted">Se actualizan solas cada minuto mientras la app está abierta.</p>`;
+    if (!r) return "Aún sin datos";
+    if (r.manual) return "Tasa manual";
+    if (rateErrors[key]) return "Último valor guardado";
+    if (Date.now() - (r.fetchedAt || 0) > STALE_MS) return "Puede estar desactualizada";
+    return `Actualizada ${ageText(r.updatedAt || r.fetchedAt)}`;
+  };
+  const edit = (key) => `<button class="rate-edit" data-act="manual" data-key="${key}" aria-label="Editar tasa ${key}">Editar</button>${state.rates[key]?.manual ? `<button class="rate-edit" data-act="auto" data-key="${key}">Auto</button>` : ""}`;
+  const bcv = rateVal("bcvUsd"), bin = rateVal("binance");
+  const gap = bcv && bin ? ((bin - bcv) * 10000n) / bcv : null;
+  return `<section class="rate-feature" aria-label="Tasa BCV del dólar">
+    <div class="rate-feature-top"><div class="rate-symbol" aria-hidden="true">$</div><div class="rate-feature-name"><strong>USD (BCV)</strong><span>Dólar oficial de referencia</span></div></div>
+    <div class="rate-feature-value">${value("bcvUsd")}</div>
+    <div class="rate-feature-meta"><span>${detail("bcvUsd")}</span>${edit("bcvUsd")}</div>
+  </section>
+  <section class="rate-list" aria-label="Otras tasas">
+    <div class="rate-item"><div class="rate-item-symbol" aria-hidden="true">€</div><div class="rate-item-copy"><strong>EUR (BCV)</strong><span>${detail("bcvEur")}</span></div><div class="rate-item-end"><strong>${value("bcvEur")}</strong>${edit("bcvEur")}</div></div>
+    <div class="rate-item"><div class="rate-item-symbol" aria-hidden="true">↗</div><div class="rate-item-copy"><strong>Binance / Paralelo</strong><span>Referencia aproximada · ${detail("binance")}</span></div><div class="rate-item-end"><strong>${value("binance")}</strong>${edit("binance")}</div></div>
+    ${gap === null ? "" : `<div class="rate-item rate-gap"><div class="rate-item-symbol" aria-hidden="true">%</div><div class="rate-item-copy"><strong>Brecha</strong><span>Paralelo vs. BCV (USD)</span></div><strong class="gap-value">${gap > 0n ? "+" : ""}${formatScaled(gap, 2)}%</strong></div>`}
+  </section>
+  <button class="primary rate-refresh" data-act="refresh" ${loading ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.5 9A7 7 0 0 1 18 7l2 5M4 12l2 5a7 7 0 0 0 12.5-2"/></svg>${loading ? "Actualizando…" : "Actualizar tasas"}</button>
+  <p class="rate-note"><span class="note-icon" aria-hidden="true">i</span>El dólar y el euro se consultan mediante un servicio comunitario. Binance / Paralelo es una referencia aproximada; verifica la tasa antes de operar.</p>`;
 }
 
 function monthKey(d) { return d.slice(0, 7); }
@@ -150,7 +156,7 @@ function viewChart(set) {
     ${legend}${skipped ? `<p class="muted">${skipped} movimiento(s) no incluidos por falta de tasa.</p>` : ""}</div>`;
 }
 
-export const APP_VERSION = "2026.11.14-a";
+export const APP_VERSION = "2026.11.20-ui";
 const BACKUP_DAYS = 7;
 function backupBanner() {
   if (!state.transactions.length && !state.goals.length && !state.debts.length && !state.accounts.length) return "";
@@ -323,10 +329,15 @@ function viewGoals() {
 
 const TITLES = { rates: "Tasas", tx: "Movimientos", convert: "Convertir", accounts: "Cuentas", debts: "Deudas", goals: "Metas de ahorro" };
 function render() {
+  applyTheme();
   $("#title").textContent = TITLES[tab];
+  $("#page-date").textContent = new Intl.DateTimeFormat("es-VE", { day: "numeric", month: "short", year: "numeric" }).format(new Date());
   document.querySelectorAll(".tabs button").forEach((b) => {
-    if (b.dataset.tab === tab) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    const active = b.dataset.tab === tab || (b.dataset.act === "more" && ["accounts", "debts", "goals"].includes(tab));
+    if (active) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
   });
+  $("#more-menu").hidden = !moreOpen;
+  document.querySelector('[data-act="more"]').setAttribute("aria-expanded", String(moreOpen));
   const views = { rates: viewRates, tx: viewTx, convert: viewConvert, accounts: viewAccounts, debts: viewDebts, goals: viewGoals };
   const keep = document.activeElement?.id;
   $("#view").innerHTML = views[tab]();
@@ -603,6 +614,8 @@ function categoriesDialog(type = "expense") {
 
 function settingsDialog() {
   const dlg = dialog(`
+    <label for="s-theme">Apariencia</label>
+    <select id="s-theme" name="theme"><option value="system" ${(state.settings.theme || "system") === "system" ? "selected" : ""}>Según el teléfono</option><option value="light" ${state.settings.theme === "light" ? "selected" : ""}>Claro</option><option value="dark" ${state.settings.theme === "dark" ? "selected" : ""}>Oscuro</option></select>
     <label for="s-val">Valorar el balance con</label>
     <select id="s-val" name="valuation"><option value="bcv" ${state.settings.valuation === "bcv" ? "selected" : ""}>Tasa BCV</option><option value="binance" ${state.settings.valuation === "binance" ? "selected" : ""}>Tasa Binance</option></select>
     <h2>Tasa Binance</h2>
@@ -617,6 +630,7 @@ function settingsDialog() {
     const raw = (d.adjust || "").trim();
     if (raw && parseDecimal(raw, 8) === null) return "El ajuste debe ser un número.";
     state.settings.valuation = d.valuation;
+    state.settings.theme = d.theme;
     if (raw !== state.settings.parallelAdjust) { state.settings.parallelAdjust = raw; setTimeout(refreshRates, 0); }
   });
   dlg.querySelector("#s-exp").onclick = () => exportBackup().then((ok) => ok && render()).catch(() => { dlg.querySelector("#dlg-err").textContent = "No se pudo crear el respaldo."; });
@@ -633,8 +647,8 @@ function settingsDialog() {
 
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
-  const tabBtn = e.target.closest(".tabs button");
-  if (tabBtn) { tab = tabBtn.dataset.tab; render(); return; }
+  const tabBtn = e.target.closest("[data-tab]");
+  if (tabBtn) { tab = tabBtn.dataset.tab; moreOpen = false; render(); return; }
   const df = e.target.closest("[data-debtf]");
   if (df) { debtFilter = df.dataset.debtf; render(); return; }
   const per = e.target.closest("[data-period]");
@@ -644,6 +658,12 @@ document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-act]");
   if (!b) return;
   const { act, key, id } = b.dataset;
+  if (act === "more") { moreOpen = !moreOpen; render(); return; }
+  if (act === "theme") {
+    const dark = document.documentElement.dataset.theme === "dark";
+    state.settings.theme = dark ? "light" : "dark";
+    persist(); render(); return;
+  }
   if (act === "refresh") refreshRates();
   else if (act === "manual") manualRateDialog(key);
   else if (act === "auto") { delete state.rates[key]; persist(); refreshRates(); }
@@ -694,6 +714,9 @@ document.addEventListener("click", (e) => {
   else if (act === "cats") categoriesDialog();
   else if (act === "backup") exportBackup().then((ok) => ok && render()).catch(() => alert("No se pudo crear el respaldo."));
 });
+
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && moreOpen) { moreOpen = false; render(); } });
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { if ((state.settings.theme || "system") === "system") applyTheme(); });
 
 document.addEventListener("input", (e) => {
   const t = e.target;
