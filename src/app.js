@@ -20,7 +20,6 @@ const RATE_CARDS = [
 const hadLocal = hasLocal();
 let state = load();
 let tab = "rates";
-let moreOpen = false;
 let rateErrors = {};
 let loading = false;
 let chartPeriod = "month";
@@ -333,11 +332,9 @@ function render() {
   $("#title").textContent = TITLES[tab];
   $("#page-date").textContent = new Intl.DateTimeFormat("es-VE", { day: "numeric", month: "short", year: "numeric" }).format(new Date());
   document.querySelectorAll(".tabs button").forEach((b) => {
-    const active = b.dataset.tab === tab || (b.dataset.act === "more" && ["accounts", "debts", "goals"].includes(tab));
+    const active = b.dataset.tab === tab;
     if (active) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
   });
-  $("#more-menu").hidden = !moreOpen;
-  document.querySelector('[data-act="more"]').setAttribute("aria-expanded", String(moreOpen));
   const views = { rates: viewRates, tx: viewTx, convert: viewConvert, accounts: viewAccounts, debts: viewDebts, goals: viewGoals };
   const keep = document.activeElement?.id;
   $("#view").innerHTML = views[tab]();
@@ -648,7 +645,7 @@ function settingsDialog() {
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
   const tabBtn = e.target.closest("[data-tab]");
-  if (tabBtn) { tab = tabBtn.dataset.tab; moreOpen = false; render(); return; }
+  if (tabBtn) { tab = tabBtn.dataset.tab; render(); return; }
   const df = e.target.closest("[data-debtf]");
   if (df) { debtFilter = df.dataset.debtf; render(); return; }
   const per = e.target.closest("[data-period]");
@@ -658,7 +655,6 @@ document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-act]");
   if (!b) return;
   const { act, key, id } = b.dataset;
-  if (act === "more") { moreOpen = !moreOpen; render(); return; }
   if (act === "theme") {
     const dark = document.documentElement.dataset.theme === "dark";
     state.settings.theme = dark ? "light" : "dark";
@@ -715,7 +711,6 @@ document.addEventListener("click", (e) => {
   else if (act === "backup") exportBackup().then((ok) => ok && render()).catch(() => alert("No se pudo crear el respaldo."));
 });
 
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && moreOpen) { moreOpen = false; render(); } });
 matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { if ((state.settings.theme || "system") === "system") applyTheme(); });
 
 document.addEventListener("input", (e) => {
