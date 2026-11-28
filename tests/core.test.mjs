@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  parseAmount, parseRate, convert, expensesByCategory, debtProgress, debtTotals, accountsTotal, applyAccountMove, balances, totalIn, goalProgress, formatMinor, formatRate, minorToInput,
+  parseAmount, parseRate, convert, expensesByCategory, debtProgress, debtTotals, accountsTotal, applyAccountMove, reviseAccountBalance, balances, totalIn, goalProgress, formatMinor, formatRate, minorToInput,
 } from "../src/money.js";
 import { parseDolarApi, fetchRates } from "../src/rates.js";
 import { normalize, defaultState } from "../src/store.js";
@@ -148,4 +148,12 @@ test("account movements adjust the balance and never go negative", () => {
   const s = normalize({ accounts: [{ name: "A", currency: "USD", balanceMinor: "5", history: [{ kind: "out", amountMinor: "1" }, { kind: "x", amountMinor: "1" }] }, { name: "B", currency: "USD", balanceMinor: "5" }] });
   assert.equal(s.accounts[0].history.length, 1);
   assert.deepEqual(s.accounts[1].history, []);
+});
+
+test("editing an older account movement corrects the current balance and rejects negatives", () => {
+  assert.equal(reviseAccountBalance("7000", { kind: "out", amountMinor: "3000" }, "out", "2000"), 8000n);
+  assert.equal(reviseAccountBalance("7000", { kind: "out", amountMinor: "3000" }, "in", "2000"), 12000n);
+  assert.equal(reviseAccountBalance("1000", { kind: "in", amountMinor: "3000" }, "in", "2500"), 500n);
+  assert.equal(reviseAccountBalance("1000", { kind: "in", amountMinor: "3000" }, "in", "1000"), null);
+  assert.equal(reviseAccountBalance("500", null, "out", "501"), null);
 });

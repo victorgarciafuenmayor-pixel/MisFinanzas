@@ -168,3 +168,11 @@ export function applyAccountMove(balanceMinor, kind, amountMinor) {
   const next = BigInt(balanceMinor) + (kind === "in" ? BigInt(amountMinor) : -BigInt(amountMinor));
   return next < 0n ? null : next;
 }
+
+/** Replace a recorded account movement while preserving all later manual balance changes. */
+export function reviseAccountBalance(balanceMinor, previous, kind, amountMinor) {
+  const oldDelta = previous ? (previous.kind === "in" ? 1n : -1n) * BigInt(previous.amountMinor) : 0n;
+  const newDelta = (kind === "in" ? 1n : -1n) * BigInt(amountMinor);
+  const next = BigInt(balanceMinor) - oldDelta + newDelta;
+  return next < 0n ? null : next;
+}

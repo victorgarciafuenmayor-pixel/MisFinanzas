@@ -1,9 +1,10 @@
 import {
   CURRENCIES, SYMBOLS, parseAmount, parseRate, parseDecimal, formatMinor, formatRate, formatScaled, minorToInput,
-  convert, balances, totalIn, goalProgress, expensesByCategory, debtProgress, debtTotals, accountsTotal, applyAccountMove,
+  convert, balances, totalIn, goalProgress, expensesByCategory, debtProgress, debtTotals, accountsTotal, applyAccountMove, reviseAccountBalance,
 } from "./money.js";
 import { fetchRates } from "./rates.js";
-import { load, save, uid, hasLocal, idbLoad, normalize } from "./store.js";
+import { load, save, uid, hasLocal, idbLoad, normalize, putReceipt, getReceipt, deleteReceipt, allReceipts, replaceReceipts } from "./store.js";
+import { createAccountsPdf } from "./report.js";
 
 const REFRESH_MS = 60_000;
 const STALE_MS = 15 * 60_000;
@@ -52,6 +53,70 @@ function expandableList(key, items, renderRow, wrapStyle = "margin-top:10px") {
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const persist = () => save(state);
 const today = () => new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD in local time
+
+const receiptFields = (id) => `<label for="f-receipt">Captura del movimiento (opcional)</label>
+  <input id="f-receipt" name="receipt" type="file" accept="image/png,image/jpeg,image/webp">
+  <p class="muted">PNG, JPG o WebP. Se guarda en este dispositivo y en el respaldo.</p>
+  ${id ? `<div class="actions"><button type="button" class="link" data-view-receipt="${esc(id)}">Ver captura actual</button></div>
+    <label class="receipt-remove"><input type="checkbox" name="removeReceipt"> Quitar captura actual</label>` : ""}`;
+const usedReceiptIds = (data = state) => new Set([
+  ...data.transactions.map((t) => t.receiptId),
+  ...data.accounts.flatMap((a) => a.history.map((h) => h.receiptId)),
+].filter(Boolean));
+async function pruneReceipt(id) {
+  if (id && !usedReceiptIds().has(id)) await deleteReceipt(id);
+}
+async function compressReceipt(file) {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 12 * 1024 * 1024) {
+    throw new Error("Elige una imagen PNG, JPG o WebP de hasta 12 MB.");
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; });
+    const scale = Math.min(1, 1400 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
+    if (!blob) throw new Error("No se pudo procesar la captura.");
+    return blob;
+  } finally { URL.revokeObjectURL(url); }
+}
+async function selectedReceiptId(currentId, input, remove) {
+  if (!input?.size) return remove ? null : currentId || null;
+  const blob = await compressReceipt(input);
+  const id = uid();
+  await putReceipt(id, blob);
+  return id;
+}
+async function showReceipt(id) {
+  try {
+    const blob = await getReceipt(id);
+    if (!blob) throw new Error("La captura no está disponible en este dispositivo.");
+    const url = URL.createObjectURL(blob);
+    const dlg = $("#dlg");
+    if (dlg.open) {
+      dlg.querySelector(".receipt-inline")?.remove();
+      const preview = document.createElement("img");
+      preview.className = "receipt-inline";
+      preview.alt = "Captura del movimiento";
+      preview.src = url;
+      dlg.querySelector('[data-view-receipt]')?.after(preview);
+      dlg.addEventListener("close", () => URL.revokeObjectURL(url), { once: true });
+      return;
+    }
+    dlg.innerHTML = `<div class="receipt-view"><img src="${url}" alt="Captura del movimiento"><div class="actions"><button type="button">Cerrar</button></div></div>`;
+    dlg.querySelector("button").onclick = () => dlg.close();
+    dlg.addEventListener("close", () => URL.revokeObjectURL(url), { once: true });
+    dlg.showModal();
+  } catch (e) { alert(e.message || "No se pudo abrir la captura."); }
+}
 
 /* ---------- rates ---------- */
 const rateVal = (key) => (state.rates[key] ? BigInt(state.rates[key].value) : null);
@@ -155,7 +220,7 @@ function viewChart(set) {
     ${legend}${skipped ? `<p class="muted">${skipped} movimiento(s) no incluidos por falta de tasa.</p>` : ""}</div>`;
 }
 
-export const APP_VERSION = "2026.11.20-ui";
+export const APP_VERSION = "2026.11.28-cuentas";
 const BACKUP_DAYS = 7;
 function backupBanner() {
   if (!state.transactions.length && !state.goals.length && !state.debts.length && !state.accounts.length) return "";
@@ -166,7 +231,16 @@ function backupBanner() {
 }
 
 async function exportBackup() {
-  const json = JSON.stringify(state, null, 2);
+  const ids = usedReceiptIds();
+  const stored = await allReceipts();
+  if (ids.size && stored.filter((x) => ids.has(x.id)).length !== ids.size) throw new Error("Faltan capturas; no se creó un respaldo incompleto.");
+  const receipts = await Promise.all(stored.filter((x) => ids.has(x.id)).map(async ({ id, blob }) => {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+    return { id, mime: blob.type, data: btoa(binary) };
+  }));
+  const json = JSON.stringify({ ...state, receipts }, null, 2);
   const name = `finanzas-ve-${today()}.json`;
   const file = new File([json], name, { type: "application/json" });
   try {
@@ -180,6 +254,22 @@ async function exportBackup() {
   state.settings.lastBackup = Date.now();
   persist();
   return true;
+}
+
+async function restoreBackup(raw) {
+  const parsed = JSON.parse(raw);
+  const next = normalize(parsed);
+  const ids = usedReceiptIds(next);
+  const receipts = Array.isArray(parsed.receipts) ? parsed.receipts : [];
+  const restored = receipts.filter((r) => ids.has(r.id)).map((r) => {
+    if (r.mime !== "image/jpeg" || typeof r.data !== "string" || r.data.length > 3_000_000) throw new Error("Captura inválida en el respaldo.");
+    const bytes = Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0));
+    return { id: r.id, blob: new Blob([bytes], { type: r.mime }) };
+  });
+  if (ids.size !== new Set(restored.map((r) => r.id)).size) throw new Error("El respaldo no incluye todas las capturas de sus movimientos.");
+  if (!confirm("Esto reemplazará todos los datos actuales. ¿Continuar?")) return;
+  await replaceReceipts(restored);
+  state = next; persist(); $("#dlg").close(); render();
 }
 
 function viewTx() {
@@ -201,7 +291,8 @@ function viewTx() {
   const items = list.length
     ? list.map((t) => `<div class="card tx"><div class="row"><span class="chip ${t.type}">${t.type === "income" ? "↓" : "↑"}</span><div class="grow"><b>${esc(t.category)}</b><div class="muted">${esc(t.date)}</div>${t.note ? `<div class="desc">${esc(t.note)}</div>` : ""}</div>
       <div style="text-align:right"><div class="num ${t.type}">${t.type === "income" ? "+" : "−"}${formatMinor(BigInt(t.amountMinor), t.currency)}</div>
-      <button class="link" data-act="edit-tx" data-id="${esc(t.id)}">Editar</button><button class="link danger" data-act="del-tx" data-id="${esc(t.id)}">Borrar</button></div></div></div>`).join("")
+      <div class="tx-actions">${t.receiptId ? `<button class="link" data-act="view-receipt" data-rid="${esc(t.receiptId)}">Ver captura</button>` : ""}
+      <button class="link" data-act="edit-tx" data-id="${esc(t.id)}">Editar</button><button class="link danger" data-act="del-tx" data-id="${esc(t.id)}">Borrar</button></div></div></div></div>`).join("")
     : '<div class="empty">Aún no hay movimientos.<br>Toca + para registrar un ingreso o egreso.</div>';
   return `${backupBanner()}<div class="card hero"><div class="muted">Balance total (${state.settings.valuation === "binance" ? "tasa Binance" : "tasa BCV"})</div>
     <div class="big">${totalUsd === null ? "—" : formatMinor(totalUsd, "USD")}</div>
@@ -259,9 +350,11 @@ function viewConvert() {
 
 function hist(a) {
   return expandableList("acc:" + a.id, newestFirst(a.history), (h) => `
-    <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><div class="grow"><span class="num ${h.kind === "in" ? "income" : "expense"}">${h.kind === "in" ? "+" : "−"}${formatMinor(BigInt(h.amountMinor), a.currency)}</span>
-    <span class="muted"> · ${esc(h.date)}${h.note ? " · " + esc(h.note) : ""}</span></div>
-    <button class="link danger" data-act="del-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Quitar</button></div>`);
+    <div class="row account-history-row" style="padding:5px 0;border-top:1px solid var(--line)"><div class="grow"><span class="num ${h.kind === "in" ? "income" : "expense"}">${h.kind === "in" ? "+" : "−"}${formatMinor(BigInt(h.amountMinor), a.currency)}</span>
+     <span class="muted"> · ${esc(h.date)}${h.note ? " · " + esc(h.note) : ""}</span></div>
+     <div class="account-move-actions">${h.receiptId ? `<button class="link" data-act="view-receipt" data-rid="${esc(h.receiptId)}">Captura</button>` : ""}
+     <button class="link" data-act="edit-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Editar</button>
+     <button class="link danger" data-act="del-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Quitar</button></div></div>`);
 }
 
 function viewAccounts() {
@@ -278,7 +371,53 @@ function viewAccounts() {
   return `<div class="card hero"><div class="muted">Total en tus cuentas (≈ USD)</div><div class="big">${state.accounts.length ? formatMinor(total, "USD") : "—"}</div>
     <div class="muted" style="margin-top:6px">${state.accounts.length} cuenta${state.accounts.length === 1 ? "" : "s"} · sección independiente, no modifica Movimientos</div>
     ${skipped ? '<div class="muted">Algunas cuentas no se suman por falta de tasa.</div>' : ""}</div>
-    <button class="primary" style="width:100%;margin-bottom:12px" data-act="add-account">+ Nueva cuenta</button>${cards}`;
+     <div class="account-toolbar"><button class="primary" data-act="add-account">+ Nueva cuenta</button><button data-act="export-accounts">Exportar PDF</button></div>${cards}`;
+}
+
+function chooseAccountsDialog() {
+  if (!state.accounts.length) { alert("Agrega una cuenta antes de exportar."); return; }
+  const dlg = $("#dlg");
+  dlg.innerHTML = `<form id="export-form"><h2>Exportar cuentas</h2>
+    <p class="muted">Selecciona las cuentas que quieres incluir en el PDF. Se mostrarán sus saldos y movimientos.</p>
+    <div class="export-choices">${state.accounts.map((a) => `<label class="export-choice"><input type="checkbox" name="account" value="${esc(a.id)}" checked>
+      <span><b>${esc(a.name)}</b><small>${esc(a.currency)} · ${formatMinor(BigInt(a.balanceMinor), a.currency)}</small></span></label>`).join("")}</div>
+    <button type="button" class="link" id="export-toggle">Quitar selección</button>
+    <div class="err-text" id="dlg-err" role="alert"></div>
+    <div class="actions"><button type="button" data-close>Cancelar</button><button class="primary" type="submit">Crear PDF</button></div></form>`;
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  const choices = [...dlg.querySelectorAll('[name="account"]')], toggle = dlg.querySelector("#export-toggle");
+  const updateToggle = () => { toggle.textContent = choices.every((x) => x.checked) ? "Quitar selección" : "Seleccionar todas"; };
+  toggle.onclick = () => { const all = !choices.every((x) => x.checked); choices.forEach((x) => { x.checked = all; }); updateToggle(); };
+  choices.forEach((x) => x.onchange = updateToggle);
+  dlg.querySelector("form").onsubmit = async (e) => {
+    e.preventDefault();
+    const ids = new Set(choices.filter((x) => x.checked).map((x) => x.value));
+    if (!ids.size) { dlg.querySelector("#dlg-err").textContent = "Selecciona al menos una cuenta."; return; }
+    const button = dlg.querySelector('[type="submit"]'); button.disabled = true;
+    try {
+      const accounts = state.accounts.filter((a) => ids.has(a.id));
+      const { total, skipped } = accountsTotal(accounts, rateSet(state.settings.valuation));
+      const label = skipped ? "Total estimado parcial (faltan tasas)" : "Total estimado en USD";
+      const receipts = [];
+      for (const account of accounts) for (const movement of account.history) if (movement.receiptId) {
+        const blob = await getReceipt(movement.receiptId);
+        if (!blob) throw new Error("No se encontró una captura de estas cuentas.");
+        receipts.push({ account: account.name, date: movement.date, note: movement.note, blob });
+      }
+      const blob = await createAccountsPdf(accounts, { totalLabel: `${label}: ${formatMinor(total, "USD")}`, receipts });
+      const file = new File([blob], `mis-finanzas-cuentas-${today()}.pdf`, { type: "application/pdf" });
+      if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: "Mis cuentas - Mis Finanzas VE" });
+      else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = file.name; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      }
+      dlg.close();
+    } catch (err) {
+      if (err?.name !== "AbortError") dlg.querySelector("#dlg-err").textContent = err.message || "No se pudo generar o compartir el PDF.";
+    } finally { button.disabled = false; }
+  };
+  dlg.showModal();
 }
 
 function viewDebts() {
@@ -349,13 +488,19 @@ function dialog(html, onSubmit) {
     <div class="actions"><button type="button" data-close>Cancelar</button><button class="primary" type="submit">Guardar</button></div></form>`;
   const form = dlg.querySelector("form");
   dlg.querySelector("[data-close]").onclick = () => dlg.close();
-  form.onsubmit = (e) => {
+  form.onsubmit = async (e) => {
     e.preventDefault();
-    const err = onSubmit(Object.fromEntries(new FormData(form)));
-    if (err) { dlg.querySelector("#dlg-err").textContent = err; return; }
-    dlg.close();
-    persist();
-    render();
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const err = await onSubmit(Object.fromEntries(new FormData(form)));
+      if (err) { dlg.querySelector("#dlg-err").textContent = err; return; }
+      dlg.close();
+      persist();
+      render();
+    } catch (err) {
+      dlg.querySelector("#dlg-err").textContent = err.message || "No se pudieron guardar los cambios.";
+    } finally { submit.disabled = false; }
   };
   dlg.showModal();
   return dlg;
@@ -372,7 +517,8 @@ function addTxDialog(existing = null) {
     <label for="f-cat">Categoría</label><select id="f-cat" name="category"></select>
     <input id="f-newcat" name="newcat" maxlength="30" placeholder="Nombre de la nueva categoría" autocomplete="off" hidden style="margin-top:8px">
     <label for="f-note">Descripción (opcional)</label><input id="f-note" name="note" maxlength="120" autocomplete="off" placeholder="Ej: Mercado de la semana" value="${esc(existing?.note ?? "")}">
-    <label for="f-date">Fecha</label><input id="f-date" name="date" type="date" value="${existing?.date ?? today()}">`, (d) => {
+     <label for="f-date">Fecha</label><input id="f-date" name="date" type="date" value="${existing?.date ?? today()}">
+     ${receiptFields(existing?.receiptId)}`, async (d) => {
     const amountMinor = parseAmount(d.amount);
     if (amountMinor === null || amountMinor <= 0n) return "Escribe un monto mayor que cero.";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return "Fecha inválida.";
@@ -385,8 +531,11 @@ function addTxDialog(existing = null) {
       else state.settings.customCats[type] = [...(state.settings.customCats[type] || []), category];
     }
     state.settings.lastCurrency = d.currency;
-    const tx = { id: existing?.id ?? uid(), type, amountMinor: amountMinor.toString(), currency: d.currency, category, note: (d.note || "").trim(), date: d.date };
+    const oldReceipt = existing?.receiptId;
+    const receiptId = await selectedReceiptId(oldReceipt, d.receipt, !!d.removeReceipt);
+    const tx = { id: existing?.id ?? uid(), type, amountMinor: amountMinor.toString(), currency: d.currency, category, note: (d.note || "").trim(), date: d.date, receiptId };
     if (existing) Object.assign(existing, tx); else state.transactions.push(tx);
+    if (oldReceipt && oldReceipt !== receiptId) void pruneReceipt(oldReceipt);
   });
   const sel = dlg.querySelector("#f-cat"), newcat = dlg.querySelector("#f-newcat");
   const fillCats = (pick) => {
@@ -484,39 +633,49 @@ function accountDialog(existing = null) {
   paint();
 }
 
-function accountMoveDialog(id) {
+function accountMoveDialog(id, existing = null) {
   const acc = state.accounts.find((x) => x.id === id);
   if (!acc) return;
-  let kind = "out";
+  let kind = existing?.kind ?? "out";
+  const linked = existing?.txId ? state.transactions.find((t) => t.id === existing.txId) : null;
   const dlg = dialog(`<p><b>${esc(acc.name)}</b><br><span class="muted">Saldo actual: ${formatMinor(BigInt(acc.balanceMinor), acc.currency)}</span></p>
     <div class="seg" id="m-kind"><button type="button" data-k="out">Gasto</button><button type="button" data-k="in">Depósito</button></div>
-    <label for="m-amt">Monto (${acc.currency === "VES" ? "Bs." : acc.currency})</label><input id="m-amt" name="amount" inputmode="decimal" autocomplete="off" placeholder="0,00">
+    <label for="m-amt">Monto (${acc.currency === "VES" ? "Bs." : acc.currency})</label><input id="m-amt" name="amount" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${existing ? esc(minorToInput(BigInt(existing.amountMinor))) : ""}">
     <div class="muted" id="m-after" style="margin-top:6px;min-height:1.3em"></div>
-    <label for="m-note">Descripción (opcional)</label><input id="m-note" name="note" maxlength="120" autocomplete="off" placeholder="Ej: Supermercado">
-    <label for="m-date">Fecha</label><input id="m-date" name="date" type="date" value="${today()}">
-    <label style="display:flex;gap:10px;align-items:center;font-size:14px;color:var(--text);font-weight:500"><input type="checkbox" id="m-link" name="link" style="width:22px;min-height:22px;flex:none"> Registrar también en Movimientos</label>
-    <div id="m-catwrap" hidden><label for="m-cat">Categoría</label><select id="m-cat" name="category"></select></div>`, (d) => {
+    <label for="m-note">Descripción (opcional)</label><input id="m-note" name="note" maxlength="120" autocomplete="off" placeholder="Ej: Supermercado" value="${esc(existing?.note ?? "")}">
+    <label for="m-date">Fecha</label><input id="m-date" name="date" type="date" value="${existing?.date ?? today()}">
+    <label class="receipt-remove"><input type="checkbox" id="m-link" name="link" ${existing?.txId ? "checked" : ""}> Registrar también en Movimientos</label>
+    <div id="m-catwrap" ${existing?.txId ? "" : "hidden"}><label for="m-cat">Categoría</label><select id="m-cat" name="category"></select></div>
+    ${receiptFields(existing?.receiptId)}`, async (d) => {
     const m = parseAmount(d.amount);
     if (m === null || m <= 0n) return "Escribe un monto mayor que cero.";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return "Fecha inválida.";
-    const next = applyAccountMove(acc.balanceMinor, kind, m);
-    if (next === null) return `El gasto es mayor que el saldo de la cuenta (${formatMinor(BigInt(acc.balanceMinor), acc.currency)}).`;
-    let txId = null;
+    const next = reviseAccountBalance(acc.balanceMinor, existing, kind, m);
+    if (next === null) return "El cambio dejaría el saldo de la cuenta negativo. Ajusta el monto.";
+    const oldReceipt = existing?.receiptId;
+    const receiptId = await selectedReceiptId(oldReceipt, d.receipt, !!d.removeReceipt);
+    let txId = existing?.txId ?? null;
     if (d.link) {
-      txId = uid();
-      state.transactions.push({ id: txId, type: kind === "in" ? "income" : "expense", amountMinor: m.toString(), currency: acc.currency, category: d.category, note: (d.note || "").trim() || acc.name, date: d.date });
+      txId ||= uid();
+      const tx = { id: txId, type: kind === "in" ? "income" : "expense", amountMinor: m.toString(), currency: acc.currency, category: d.category, note: (d.note || "").trim() || acc.name, date: d.date, receiptId };
+      if (linked) Object.assign(linked, tx); else state.transactions.push(tx);
+    } else if (txId) {
+      state.transactions = state.transactions.filter((t) => t.id !== txId);
+      txId = null;
     }
-    acc.history.push({ id: uid(), kind, amountMinor: m.toString(), note: (d.note || "").trim(), date: d.date, txId });
+    const movement = { id: existing?.id ?? uid(), kind, amountMinor: m.toString(), note: (d.note || "").trim(), date: d.date, txId, receiptId };
+    if (existing) Object.assign(existing, movement); else acc.history.push(movement);
     acc.balanceMinor = next.toString();
     acc.updatedAt = Date.now();
+    if (oldReceipt && oldReceipt !== receiptId) void pruneReceipt(oldReceipt);
   });
   const amt = dlg.querySelector("#m-amt"), after = dlg.querySelector("#m-after"), link = dlg.querySelector("#m-link"), cat = dlg.querySelector("#m-cat"), wrap = dlg.querySelector("#m-catwrap");
   const paint = () => {
     dlg.querySelectorAll("#m-kind button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.k === kind)));
-    cat.innerHTML = catsFor(kind === "in" ? "income" : "expense").map((c) => `<option>${esc(c)}</option>`).join("");
+    cat.innerHTML = catsFor(kind === "in" ? "income" : "expense").map((c) => `<option ${c === linked?.category ? "selected" : ""}>${esc(c)}</option>`).join("");
     const m = parseAmount(amt.value);
-    const next = m && m > 0n ? applyAccountMove(acc.balanceMinor, kind, m) : undefined;
-    after.textContent = next === undefined ? "" : next === null ? "El monto supera el saldo disponible." : `Saldo después: ${formatMinor(next, acc.currency)}`;
+    const next = m && m > 0n ? reviseAccountBalance(acc.balanceMinor, existing, kind, m) : undefined;
+    after.textContent = next === undefined ? "" : next === null ? "El saldo quedaría negativo." : `Saldo después: ${formatMinor(next, acc.currency)}`;
   };
   dlg.querySelectorAll("#m-kind button").forEach((b) => (b.onclick = () => { kind = b.dataset.k; paint(); }));
   amt.addEventListener("input", paint);
@@ -635,15 +794,15 @@ function settingsDialog() {
   dlg.querySelector("#s-imp").onclick = () => file.click();
   file.onchange = async () => {
     try {
-      const next = normalize(JSON.parse(await file.files[0].text()));
-      if (!confirm("Esto reemplazará todos los datos actuales. ¿Continuar?")) return;
-      state = next; persist(); dlg.close(); render();
-    } catch { dlg.querySelector("#dlg-err").textContent = "Archivo de respaldo inválido."; }
+      await restoreBackup(await file.files[0].text());
+    } catch (err) { dlg.querySelector("#dlg-err").textContent = err.message || "Archivo de respaldo inválido."; }
   };
 }
 
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
+  const receiptButton = e.target.closest("[data-view-receipt]");
+  if (receiptButton) { void showReceipt(receiptButton.dataset.viewReceipt); return; }
   const tabBtn = e.target.closest("[data-tab]");
   if (tabBtn) { tab = tabBtn.dataset.tab; render(); return; }
   const df = e.target.closest("[data-debtf]");
@@ -664,12 +823,31 @@ document.addEventListener("click", (e) => {
   else if (act === "manual") manualRateDialog(key);
   else if (act === "auto") { delete state.rates[key]; persist(); refreshRates(); }
   else if (act === "add-tx") addTxDialog();
-  else if (act === "edit-tx") addTxDialog(state.transactions.find((t) => t.id === id));
-  else if (act === "del-tx") { if (confirm("¿Borrar este movimiento?")) { state.transactions = state.transactions.filter((t) => t.id !== id); persist(); render(); } }
+  else if (act === "edit-tx") {
+    const linkedAccount = state.accounts.find((a) => a.history.some((h) => h.txId === id));
+    const linkedMove = linkedAccount?.history.find((h) => h.txId === id);
+    if (linkedMove) accountMoveDialog(linkedAccount.id, linkedMove);
+    else addTxDialog(state.transactions.find((t) => t.id === id));
+  }
+  else if (act === "del-tx") {
+    const tx = state.transactions.find((t) => t.id === id);
+    if (tx && confirm("¿Borrar este movimiento del Registro? El movimiento de la cuenta, si existe, se conservará.")) {
+      state.transactions = state.transactions.filter((t) => t.id !== id);
+      for (const a of state.accounts) for (const h of a.history) if (h.txId === id) h.txId = null;
+      persist(); render(); void pruneReceipt(tx.receiptId);
+    }
+  }
+  else if (act === "view-receipt") void showReceipt(b.dataset.rid);
   else if (act === "add-account") accountDialog();
+  else if (act === "export-accounts") chooseAccountsDialog();
   else if (act === "edit-account") accountDialog(state.accounts.find((x) => x.id === id));
   else if (act === "set-balance") balanceDialog(id);
   else if (act === "acc-move") accountMoveDialog(id);
+  else if (act === "edit-acc-move") {
+    const a = state.accounts.find((x) => x.id === id);
+    const h = a?.history.find((x) => x.id === b.dataset.mid);
+    if (h) accountMoveDialog(id, h);
+  }
   else if (act === "del-acc-move") {
     const a = state.accounts.find((x) => x.id === id);
     const h = a?.history.find((x) => x.id === b.dataset.mid);
@@ -679,11 +857,15 @@ document.addEventListener("click", (e) => {
       a.balanceMinor = back.toString(); a.updatedAt = Date.now();
       a.history = a.history.filter((x) => x.id !== h.id);
       if (h.txId) state.transactions = state.transactions.filter((t) => t.id !== h.txId);
-      persist(); render();
+      persist(); render(); void pruneReceipt(h.receiptId);
     }
   }
   else if (act === "del-account") {
-    if (confirm("¿Eliminar esta cuenta? Tus movimientos y deudas no se modifican.")) { state.accounts = state.accounts.filter((x) => x.id !== id); persist(); render(); }
+    if (confirm("¿Eliminar esta cuenta? Tus movimientos y deudas no se modifican.")) {
+      const receipts = state.accounts.find((a) => a.id === id)?.history.map((h) => h.receiptId) || [];
+      state.accounts = state.accounts.filter((x) => x.id !== id); persist(); render();
+      receipts.forEach((rid) => void pruneReceipt(rid));
+    }
   }
   else if (act === "add-debt") debtDialog();
   else if (act === "edit-debt") debtDialog(state.debts.find((x) => x.id === id));
@@ -697,9 +879,10 @@ document.addEventListener("click", (e) => {
     const d = state.debts.find((x) => x.id === id);
     const pay = d?.payments.find((x) => x.id === b.dataset.pid);
     if (pay && confirm("¿Quitar este abono?" + (pay.txId ? " También se quitará el movimiento que creó." : ""))) {
+      const receiptId = state.transactions.find((t) => t.id === pay.txId)?.receiptId;
       d.payments = d.payments.filter((x) => x.id !== pay.id);
       if (pay.txId) state.transactions = state.transactions.filter((t) => t.id !== pay.txId);
-      persist(); render();
+      persist(); render(); void pruneReceipt(receiptId);
     }
   }
   else if (act === "add-goal") addGoalDialog();

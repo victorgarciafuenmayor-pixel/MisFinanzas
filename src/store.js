@@ -5,9 +5,9 @@ const KEY = "vef.state.v1";
 
 export const defaultState = () => ({
   rev: 0, // bumped on every save; lets us tell which of the two stored copies is newer
-  transactions: [], // {id,type:'income'|'expense',amountMinor,currency,category,note,date}
+  transactions: [], // {id,type:'income'|'expense',amountMinor,currency,category,note,date,receiptId?}
   debts: [], // {id,type:'owe'|'owed',person,currency,principalMinor,dueDate|null,note,payments:[{id,date,amountMinor,txId|null}]}
-  accounts: [], // {id,name,currency,balanceMinor,updatedAt,history:[{id,kind:'in'|'out',amountMinor,note,date,txId|null}]} — standalone balances, independent of transactions
+  accounts: [], // {id,name,currency,balanceMinor,updatedAt,history:[{id,kind:'in'|'out',amountMinor,note,date,txId|null,receiptId?}]} — standalone balances, independent of transactions
   goals: [], // {id,name,targetMinor(USD),deadline|null,contributions:[{id,date,amountMinor}]}
   rates: { bcvUsd: null, bcvEur: null, binance: null }, // {value:string,updatedAt,source,manual?}
   settings: { valuation: "bcv", theme: "system", customCats: { income: [], expense: [] }, lastBackup: null, parallelAdjust: "", lastCurrency: "USD" }, // which USD rate values the VES balance: 'bcv' | 'binance'
@@ -37,8 +37,11 @@ export function save(state, storage = globalThis.localStorage) {
 // --- IndexedDB mirror (best effort; every call resolves, never throws) ---
 const idb = () => new Promise((resolve) => {
   try {
-    const req = indexedDB.open("vef", 1);
-    req.onupgradeneeded = () => req.result.createObjectStore("kv");
+    const req = indexedDB.open("vef", 2);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains("kv")) req.result.createObjectStore("kv");
+      if (!req.result.objectStoreNames.contains("receipts")) req.result.createObjectStore("receipts");
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => resolve(null);
   } catch { resolve(null); }
@@ -69,6 +72,63 @@ export async function idbLoad() {
     const req = db.transaction("kv").objectStore("kv").get(KEY);
     req.onsuccess = () => { db.close(); try { resolve(req.result ? normalize(JSON.parse(req.result)) : null); } catch { resolve(null); } };
     req.onerror = () => { db.close(); resolve(null); };
+  });
+}
+
+// Receipt images live outside localStorage so photos cannot exhaust its small quota.
+// They are included explicitly when exporting a backup.
+export async function putReceipt(id, blob) {
+  const db = await idb();
+  if (!db) throw new Error("No se pudo acceder al almacenamiento de capturas.");
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("receipts", "readwrite");
+    tx.objectStore("receipts").put(blob, id);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = tx.onabort = () => { db.close(); reject(new Error("No se pudo guardar la captura.")); };
+  });
+}
+
+export async function getReceipt(id) {
+  const db = await idb();
+  if (!db) throw new Error("No se pudo acceder a las capturas.");
+  return new Promise((resolve, reject) => {
+    const req = db.transaction("receipts").objectStore("receipts").get(id);
+    req.onsuccess = () => { db.close(); resolve(req.result || null); };
+    req.onerror = () => { db.close(); reject(new Error("No se pudo abrir la captura.")); };
+  });
+}
+
+export async function deleteReceipt(id) {
+  const db = await idb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    const tx = db.transaction("receipts", "readwrite");
+    tx.objectStore("receipts").delete(id);
+    tx.oncomplete = tx.onerror = tx.onabort = () => { db.close(); resolve(); };
+  });
+}
+
+export async function allReceipts() {
+  const db = await idb();
+  if (!db) throw new Error("No se pudo acceder a las capturas para el respaldo.");
+  return new Promise((resolve, reject) => {
+    const store = db.transaction("receipts").objectStore("receipts");
+    const keys = store.getAllKeys(), values = store.getAll();
+    values.onsuccess = () => { db.close(); resolve(keys.result.map((id, i) => ({ id, blob: values.result[i] }))); };
+    values.onerror = keys.onerror = () => { db.close(); reject(new Error("No se pudieron leer las capturas.")); };
+  });
+}
+
+export async function replaceReceipts(entries) {
+  const db = await idb();
+  if (!db) throw new Error("No se pudo acceder al almacenamiento de capturas.");
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("receipts", "readwrite");
+    const store = tx.objectStore("receipts");
+    store.clear();
+    for (const { id, blob } of entries) store.put(blob, id);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = tx.onabort = () => { db.close(); reject(new Error("No se pudieron restaurar las capturas.")); };
   });
 }
 

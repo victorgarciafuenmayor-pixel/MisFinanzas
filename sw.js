@@ -1,9 +1,9 @@
 // App-shell cache so the app opens offline. Rate APIs are never cached here
 // (the app keeps the last known rates itself and shows how old they are).
-const CACHE = "vef-shell-v5";
+const CACHE = "vef-shell-v6";
 const SHELL = [
   "./", "index.html", "styles.css", "theme.css", "manifest.webmanifest",
-  "src/app.js", "src/money.js", "src/rates.js", "src/store.js",
+  "src/app.js", "src/money.js", "src/rates.js", "src/store.js", "src/report.js",
   "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
 ];
 
