@@ -350,8 +350,8 @@ function viewConvert() {
 
 function hist(a) {
   return expandableList("acc:" + a.id, newestFirst(a.history), (h) => `
-    <div class="row account-history-row" style="padding:5px 0;border-top:1px solid var(--line)"><div class="grow"><span class="num ${h.kind === "in" ? "income" : "expense"}">${h.kind === "in" ? "+" : "−"}${formatMinor(BigInt(h.amountMinor), a.currency)}</span>
-     <span class="muted"> · ${esc(h.date)}${h.note ? " · " + esc(h.note) : ""}</span></div>
+    <div class="row account-history-row"><div class="grow"><div class="num ${h.kind === "in" ? "income" : "expense"}">${h.kind === "in" ? "+" : "−"}${formatMinor(BigInt(h.amountMinor), a.currency)}</div>
+     <div class="muted">${esc(h.date)}${h.note ? " · " + esc(h.note) : ""}</div></div>
      <div class="account-move-actions">${h.receiptId ? `<button class="link" data-act="view-receipt" data-rid="${esc(h.receiptId)}">Captura</button>` : ""}
      <button class="link" data-act="edit-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Editar</button>
      <button class="link danger" data-act="del-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Quitar</button></div></div>`);

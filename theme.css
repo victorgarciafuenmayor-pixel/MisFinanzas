@@ -116,10 +116,14 @@ h1 { font-size: 34px; line-height: 1.1; letter-spacing: -.035em; font-weight: 75
 .account-toolbar button:first-child { flex: 1; }
 .account-toolbar button:last-child { flex: 0 0 auto; }
 .account-move-actions, .tx-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 2px; justify-content: flex-end; }
-.account-move-actions button, .tx-actions button { min-height: 38px; }
+.account-move-actions button, .tx-actions button { min-height: 44px; }
+.account-history-row { align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); }
+.account-history-row .num { white-space: nowrap; }
+.account-history-row .muted { overflow-wrap: anywhere; }
 @media (max-width: 480px) {
-  .account-history-row { flex-wrap: wrap; gap: 0; }
-  .account-history-row .account-move-actions { width: 100%; }
+  .account-history-row { display: block; }
+  .account-history-row .grow { width: 100%; }
+  .account-history-row .account-move-actions { justify-content: flex-start; width: 100%; margin-top: 3px; }
 }
 .export-choices { max-height: min(42dvh, 340px); overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; }
 .export-choice { display: flex; align-items: center; gap: 12px; padding: 12px; margin: 0; color: var(--text); letter-spacing: 0; }
