@@ -1,6 +1,6 @@
 import { formatMinor } from "./money.js";
 
-// Self-contained PDF export: works offline in the installed app, without a CDN.
+// Offline PDF export with the same typographic hierarchy as the app.
 const latin = (s) => String(s).replace(/[\u00a0\u202f]/g, " ").replace(/[\u2013\u2014]/g, "-")
   .replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"')
   .replace(/[^\x20-\x7e\xa0-\xff\u20ac]/g, "?");
@@ -10,6 +10,23 @@ const pdfString = (s) => [...latin(s)].map((ch) => {
   if (ch === "(" || ch === ")" || ch === "\\") return "\\" + ch;
   return ch;
 }).join("");
+const widthOf = (value, size) => [...latin(value)].reduce((sum, c) => sum + (
+  c === " " ? .278 : /[.,:]/.test(c) ? .278 : /[ilI]/.test(c) ? .278
+    : /[MW]/.test(c) ? .833 : /[0-9$€]/.test(c) ? .556 : .52
+), 0) * size;
+const wrap = (value, limit = 54) => {
+  const words = latin(value).trim().split(/\s+/);
+  const result = []; let line = "";
+  for (const word of words) {
+    if (line && `${line} ${word}`.length > limit) { result.push(line); line = ""; }
+    if (word.length > limit) {
+      if (line) { result.push(line); line = ""; }
+      for (let i = 0; i < word.length; i += limit) result.push(word.slice(i, i + limit));
+    } else line = line ? `${line} ${word}` : word;
+  }
+  if (line) result.push(line);
+  return result.length ? result : [""];
+};
 
 function jpegSize(bytes) {
   for (let i = 2; i < bytes.length - 9;) {
@@ -28,36 +45,67 @@ function jpegSize(bytes) {
 
 export async function createAccountsPdf(accounts, { date = new Date(), totalLabel = "", receipts = [] } = {}) {
   const pages = [];
-  let lines = [], y = 782;
-  const addPage = () => { if (lines.length) pages.push(lines.join("\n")); lines = []; y = 782; };
-  const line = (text, { bold = false, size = 10, indent = 0, gap = 16 } = {}) => {
-    if (y < 58) addPage();
-    lines.push(`BT /F${bold ? 2 : 1} ${size} Tf 1 0 0 1 ${42 + indent} ${y} Tm (${pdfString(text)}) Tj ET`);
-    y -= gap;
+  let commands = [], y = 790, pageNumber = 1;
+  const ink = "0.08 0.14 0.17 rg";
+  const muted = "0.31 0.39 0.41 rg";
+  const accent = "0.09 0.42 0.33 rg";
+  const text = (value, x, baseline, { size = 10, bold = false, color = ink } = {}) => {
+    commands.push(`BT ${color} /F${bold ? 2 : 1} ${size} Tf 1 0 0 1 ${x} ${baseline} Tm (${pdfString(value)}) Tj ET`);
   };
-  const divider = () => { if (y < 65) addPage(); lines.push(`0.85 G 42 ${y} m 553 ${y} l S 0 G`); y -= 14; };
-  const short = (value, max = 90) => latin(value).slice(0, max);
-  line("Mis Finanzas VE", { bold: true, size: 17, gap: 25 });
-  line("Resumen de cuentas", { bold: true, size: 13, gap: 22 });
-  line(`Generado: ${new Intl.DateTimeFormat("es-VE", { dateStyle: "long" }).format(date)}`);
-  line(`${accounts.length} cuenta${accounts.length === 1 ? "" : "s"} seleccionada${accounts.length === 1 ? "" : "s"}`);
-  if (totalLabel) line(short(totalLabel));
-  y -= 6; divider();
-  for (const acc of accounts) {
-    if (y < 120) addPage();
-    line(short(acc.name, 65), { bold: true, size: 13, gap: 20 });
-    line(`Saldo actual: ${formatMinor(BigInt(acc.balanceMinor), acc.currency)} (${acc.currency})`, { bold: true, gap: 20 });
-    const history = [...(acc.history || [])].sort((a, b) => b.date.localeCompare(a.date));
-    line(`Movimientos (${history.length})`, { bold: true, gap: 20 });
-    if (!history.length) line("Sin movimientos registrados.", { indent: 10 });
-    for (const h of history) {
-      const amount = formatMinor(BigInt(h.amountMinor), acc.currency);
-      line(short(`${h.date}   ${h.kind === "in" ? "Deposito +" : "Gasto -"}${amount}   ${h.note || ""}`, 85), { indent: 10 });
-      if (h.receiptId) line("Comprobante al final del documento.", { indent: 18, size: 9, gap: 15 });
-    }
-    y -= 10; divider();
+  const right = (value, x, baseline, options = {}) => text(value, Math.max(42, Math.round(x - widthOf(value, options.size || 10))), baseline, options);
+  const rule = (baseline) => commands.push(`0.84 0.89 0.88 RG 42 ${baseline} m 553 ${baseline} l S 0 G`);
+  const brand = () => { text("Mis Finanzas VE", 42, 792, { size: 10, bold: true, color: accent }); rule(777); };
+  const finish = () => {
+    rule(48);
+    text("Mis Finanzas VE  ·  Cuentas", 42, 32, { size: 8, color: muted });
+    right(String(pageNumber), 553, 32, { size: 8, color: muted });
+    pages.push(commands.join("\n")); commands = []; pageNumber++; y = 752; brand();
+  };
+  const ensure = (height) => { if (y - height < 72) finish(); };
+  brand();
+  y = 745;
+  text("Cuentas", 42, y, { size: 25, bold: true }); y -= 24;
+  text(`Generado el ${new Intl.DateTimeFormat("es-VE", { day: "numeric", month: "long", year: "numeric" }).format(date)}`, 42, y, { size: 9, color: muted }); y -= 42;
+  if (totalLabel) {
+    const split = totalLabel.lastIndexOf(":");
+    const label = split < 0 ? "Total estimado" : totalLabel.slice(0, split);
+    const amount = split < 0 ? totalLabel : totalLabel.slice(split + 1).trim();
+    text(label, 42, y, { size: 9, color: muted }); y -= 29;
+    text(amount, 42, y, { size: 25, bold: true, color: accent }); y -= 27;
   }
-  if (lines.length) addPage();
+  text(`${accounts.length} cuenta${accounts.length === 1 ? "" : "s"} seleccionada${accounts.length === 1 ? "" : "s"}`, 42, y, { size: 10, color: muted }); y -= 23;
+  rule(y); y -= 32;
+
+  for (const account of accounts) {
+    ensure(110);
+    const history = [...(account.history || [])].sort((a, b) => b.date.localeCompare(a.date));
+    text(latin(account.name).slice(0, 48), 42, y, { size: 14, bold: true });
+    right(formatMinor(BigInt(account.balanceMinor), account.currency), 553, y, { size: 16, bold: true }); y -= 21;
+    text(`${account.currency}  ·  ${history.length} movimiento${history.length === 1 ? "" : "s"}`, 42, y, { size: 9, color: muted }); y -= 18;
+    rule(y); y -= 25;
+    if (!history.length) {
+      text("Sin movimientos registrados.", 50, y, { size: 10, color: muted }); y -= 24;
+    }
+    for (const movement of history) {
+      const note = movement.note || (movement.kind === "in" ? "Depósito" : "Gasto");
+      const noteLines = wrap(note);
+      const required = 30 + (noteLines.length - 1) * 13 + (movement.receiptId ? 12 : 0);
+      if (y - required < 72) {
+        finish();
+        text(`${latin(account.name).slice(0, 44)}  ·  continuación`, 42, y, { size: 11, bold: true }); y -= 28;
+      }
+      text(noteLines[0], 50, y, { size: 10, bold: true });
+      const sign = movement.kind === "in" ? "+" : "-";
+      right(`${sign}${formatMinor(BigInt(movement.amountMinor), account.currency)}`, 553, y, { size: 11, bold: true, color: movement.kind === "in" ? accent : ink }); y -= 14;
+      for (const extra of noteLines.slice(1)) { text(extra, 50, y, { size: 10 }); y -= 13; }
+      text(movement.date, 50, y, { size: 9, color: muted }); y -= 14;
+      if (movement.receiptId) { text("Captura incluida al final", 50, y, { size: 8, color: muted }); y -= 13; }
+      y -= 12;
+    }
+    y -= 8;
+  }
+  finish();
+
   const objects = [null,
     "<< /Type /Catalog /Pages 2 0 R >>",
     null,
@@ -81,9 +129,11 @@ export async function createAccountsPdf(accounts, { date = new Date(), totalLabe
     objects.push(`<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /${components === 1 ? "DeviceGray" : "DeviceRGB"} /BitsPerComponent 8 /Filter [/ASCIIHexDecode /DCTDecode] /Length ${hex.length + 1} >>\nstream\n${hex}>\nendstream`);
     const scale = Math.min(510 / width, 665 / height);
     const w = Math.round(width * scale), h = Math.round(height * scale);
-    const content = `BT /F2 13 Tf 1 0 0 1 42 785 Tm (${pdfString("Comprobante · " + receipt.account)}) Tj ET\n`
-      + `BT /F1 10 Tf 1 0 0 1 42 765 Tm (${pdfString(receipt.date + "  " + (receipt.note || ""))}) Tj ET\n`
-      + `q ${w} 0 0 ${h} ${Math.round((595 - w) / 2)} ${Math.round(735 - h)} cm /Im1 Do Q`;
+    const content = `BT ${accent} /F2 10 Tf 1 0 0 1 42 792 Tm (${pdfString("Mis Finanzas VE")}) Tj ET\n`
+      + `BT ${ink} /F2 20 Tf 1 0 0 1 42 745 Tm (${pdfString("Comprobante")}) Tj ET\n`
+      + `BT ${ink} /F2 12 Tf 1 0 0 1 42 720 Tm (${pdfString(receipt.account)}) Tj ET\n`
+      + `BT ${muted} /F1 9 Tf 1 0 0 1 42 702 Tm (${pdfString(receipt.date + "  ·  " + (receipt.note || ""))}) Tj ET\n`
+      + `q ${w} 0 0 ${h} ${Math.round((595 - w) / 2)} ${Math.round(680 - h)} cm /Im1 Do Q`;
     const streamId = objects.length;
     objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
     const pageId = objects.length;

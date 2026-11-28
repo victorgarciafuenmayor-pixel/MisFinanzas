@@ -41,12 +41,12 @@ function applyTheme() {
 const newestFirst = (list) => list.map((x, i) => [x, i]).sort(([a, i], [b, j]) => b.date.localeCompare(a.date) || j - i).map(([x]) => x);
 const expandedLists = new Set();
 const HIST_PREVIEW = 5;
-/** Renders newest-first rows; first 5 by default, "Ver todos" reveals the rest in a scrollable box. */
-function expandableList(key, items, renderRow, wrapStyle = "margin-top:10px") {
+/** Renders newest-first rows; "Ver todos" reveals the rest in a scrollable box. */
+function expandableList(key, items, renderRow, wrapStyle = "margin-top:10px", previewCount = HIST_PREVIEW) {
   if (!items.length) return "";
   const open = expandedLists.has(key);
-  const shown = open ? items : items.slice(0, HIST_PREVIEW);
-  const toggle = items.length > HIST_PREVIEW
+  const shown = open ? items : items.slice(0, previewCount);
+  const toggle = items.length > previewCount
     ? `<button class="link" data-act="toggle-list" data-key="${esc(key)}">${open ? "Ver menos" : `Ver todos (${items.length})`}</button>` : "";
   return `<div style="${wrapStyle}"><div ${open ? 'style="max-height:45vh;overflow-y:auto"' : ""}>${shown.map(renderRow).join("")}</div>${toggle}</div>`;
 }
@@ -354,7 +354,7 @@ function hist(a) {
      <div class="muted">${esc(h.date)}${h.note ? " · " + esc(h.note) : ""}</div></div>
      <div class="account-move-actions">${h.receiptId ? `<button class="link" data-act="view-receipt" data-rid="${esc(h.receiptId)}">Captura</button>` : ""}
      <button class="link" data-act="edit-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Editar</button>
-     <button class="link danger" data-act="del-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Quitar</button></div></div>`);
+     <button class="link danger" data-act="del-acc-move" data-id="${esc(a.id)}" data-mid="${esc(h.id)}">Quitar</button></div></div>`, "margin-top:10px", 2);
 }
 
 function viewAccounts() {
